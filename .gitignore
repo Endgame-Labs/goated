@@ -11,7 +11,6 @@
 
 # Agent personal state (belongs in workspace/self/ private repo)
 workspace/self
-workspace/TODO.md
 
 # Runtime state
 goat.sqlite
