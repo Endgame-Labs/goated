@@ -14,48 +14,40 @@ import (
 
 var bootstrapCmd = &cobra.Command{
 	Use:   "bootstrap",
-	Short: "Initialize database, workspace, and .env configuration",
+	Short: "Initialize database, workspace, and configure your first channel",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		reader := bufio.NewReader(os.Stdin)
 
 		fmt.Println("=== goated bootstrap ===")
 		fmt.Println()
 
-		// Load existing .env values as defaults
+		// Prompt for common settings first
 		existing := loadExistingEnv(".env")
-
-		token := prompt(reader, "Telegram bot token", existing["GOAT_TELEGRAM_BOT_TOKEN"])
-		if token == "" {
-			return fmt.Errorf("telegram bot token is required")
-		}
-
 		tz := prompt(reader, "Default timezone", withDefault(existing["GOAT_DEFAULT_TIMEZONE"], "America/Los_Angeles"))
-		mode := prompt(reader, "Telegram mode (polling/webhook)", withDefault(existing["GOAT_TELEGRAM_MODE"], "polling"))
 
-		var webhookURL, webhookAddr, webhookPath string
-		if mode == "webhook" {
-			webhookURL = prompt(reader, "Webhook public URL", existing["GOAT_TELEGRAM_WEBHOOK_URL"])
-			webhookAddr = prompt(reader, "Webhook listen address", withDefault(existing["GOAT_TELEGRAM_WEBHOOK_LISTEN_ADDR"], ":8080"))
-			webhookPath = prompt(reader, "Webhook path", withDefault(existing["GOAT_TELEGRAM_WEBHOOK_PATH"], "/telegram/webhook"))
+		// Interactive channel setup
+		fmt.Println()
+		ch, err := promptChannel(reader)
+		if err != nil {
+			return err
 		}
 
-		// Write .env
-		var b strings.Builder
-		b.WriteString("# goated configuration\n")
-		b.WriteString(fmt.Sprintf("GOAT_TELEGRAM_BOT_TOKEN=%s\n", token))
-		b.WriteString(fmt.Sprintf("GOAT_DEFAULT_TIMEZONE=%s\n", tz))
-		b.WriteString(fmt.Sprintf("GOAT_TELEGRAM_MODE=%s\n", mode))
-		if mode == "webhook" {
-			b.WriteString(fmt.Sprintf("GOAT_TELEGRAM_WEBHOOK_URL=%s\n", webhookURL))
-			b.WriteString(fmt.Sprintf("GOAT_TELEGRAM_WEBHOOK_LISTEN_ADDR=%s\n", webhookAddr))
-			b.WriteString(fmt.Sprintf("GOAT_TELEGRAM_WEBHOOK_PATH=%s\n", webhookPath))
+		// Write initial .env with common settings so LoadConfig works
+		var envBuilder strings.Builder
+		envBuilder.WriteString("# goated configuration\n")
+		envBuilder.WriteString(fmt.Sprintf("GOAT_DEFAULT_TIMEZONE=%s\n", tz))
+		if v := existing["GOAT_DB_PATH"]; v != "" {
+			envBuilder.WriteString(fmt.Sprintf("GOAT_DB_PATH=%s\n", v))
 		}
-
-		if err := os.WriteFile(".env", []byte(b.String()), 0o600); err != nil {
+		if v := existing["GOAT_WORKSPACE_DIR"]; v != "" {
+			envBuilder.WriteString(fmt.Sprintf("GOAT_WORKSPACE_DIR=%s\n", v))
+		}
+		if v := existing["GOAT_LOG_DIR"]; v != "" {
+			envBuilder.WriteString(fmt.Sprintf("GOAT_LOG_DIR=%s\n", v))
+		}
+		if err := os.WriteFile(".env", []byte(envBuilder.String()), 0o600); err != nil {
 			return fmt.Errorf("write .env: %w", err)
 		}
-		fmt.Println()
-		fmt.Println("Wrote .env")
 
 		// Init DB
 		cfg := app.LoadConfig()
@@ -64,6 +56,7 @@ var bootstrapCmd = &cobra.Command{
 			return err
 		}
 		defer store.Close()
+		fmt.Println()
 		fmt.Println("Database initialized at", cfg.DBPath)
 
 		// Ensure workspace dir exists
@@ -72,31 +65,25 @@ var bootstrapCmd = &cobra.Command{
 		}
 		fmt.Println("Workspace directory:", cfg.WorkspaceDir)
 
+		// Save channel to DB
+		if err := store.AddChannel(*ch); err != nil {
+			return err
+		}
+		if err := store.SetMeta("active_channel", ch.Name); err != nil {
+			return err
+		}
+		fmt.Printf("Channel %q (%s) added and activated.\n", ch.Name, ch.Type)
+
+		// Write final .env with channel config active
+		if err := writeChannelEnv(cfg, ch); err != nil {
+			return fmt.Errorf("write .env: %w", err)
+		}
+		fmt.Println("Wrote .env")
+
 		fmt.Println()
 		fmt.Println("Bootstrap complete. Run ./goated_daemon to start.")
 		return nil
 	},
-}
-
-func prompt(reader *bufio.Reader, label, defaultVal string) string {
-	if defaultVal != "" {
-		fmt.Printf("  %s [%s]: ", label, defaultVal)
-	} else {
-		fmt.Printf("  %s: ", label)
-	}
-	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return defaultVal
-	}
-	return line
-}
-
-func withDefault(val, fallback string) string {
-	if val != "" {
-		return val
-	}
-	return fallback
 }
 
 func loadExistingEnv(path string) map[string]string {

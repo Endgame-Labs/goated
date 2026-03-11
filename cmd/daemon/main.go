@@ -16,6 +16,7 @@ import (
 	cronpkg "goated/internal/cron"
 	"goated/internal/db"
 	"goated/internal/gateway"
+	slackpkg "goated/internal/slack"
 	"goated/internal/telegram"
 )
 
@@ -61,10 +62,6 @@ func main() {
 	}
 	defer os.Remove(pidPath)
 
-	if cfg.TelegramBotToken == "" {
-		fatal("GOAT_TELEGRAM_BOT_TOKEN is required")
-	}
-
 	store, err := db.Open(cfg.DBPath)
 	if err != nil {
 		fatal("open db: %v", err)
@@ -89,35 +86,77 @@ func main() {
 		DrainCtx:        drainCtx,
 	}
 
-	conn, err := telegram.NewConnector(cfg.TelegramBotToken, store)
-	if err != nil {
-		fatal("init telegram: %v", err)
-	}
-
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	runner := &cronpkg.Runner{
-		Store:            store,
-		WorkspaceDir:     cfg.WorkspaceDir,
-		LogDir:           cfg.LogDir,
-		TelegramNotifier: conn,
+	var runGateway func() error
+
+	switch cfg.Gateway {
+	case "slack":
+		if cfg.SlackBotToken == "" {
+			fatal("GOAT_SLACK_BOT_TOKEN is required")
+		}
+		if cfg.SlackAppToken == "" {
+			fatal("GOAT_SLACK_APP_TOKEN is required")
+		}
+		if cfg.SlackChannelID == "" {
+			fatal("GOAT_SLACK_CHANNEL_ID is required")
+		}
+
+		conn, err := slackpkg.NewConnector(cfg.SlackBotToken, cfg.SlackAppToken, cfg.SlackChannelID, store)
+		if err != nil {
+			fatal("init slack: %v", err)
+		}
+
+		runner := &cronpkg.Runner{
+			Store:        store,
+			WorkspaceDir: cfg.WorkspaceDir,
+			LogDir:       cfg.LogDir,
+			Notifier:     conn,
+		}
+		go runCronTicker(ctx, runner)
+
+		runGateway = func() error {
+			fmt.Fprintf(os.Stderr, "[%s] goated_daemon running (pid=%d, gateway=slack)\n",
+				time.Now().Format(time.RFC3339), os.Getpid())
+			return conn.Run(ctx, svc)
+		}
+
+	default: // "telegram"
+		if cfg.TelegramBotToken == "" {
+			fatal("GOAT_TELEGRAM_BOT_TOKEN is required")
+		}
+
+		conn, err := telegram.NewConnector(cfg.TelegramBotToken, store)
+		if err != nil {
+			fatal("init telegram: %v", err)
+		}
+
+		runner := &cronpkg.Runner{
+			Store:        store,
+			WorkspaceDir: cfg.WorkspaceDir,
+			LogDir:       cfg.LogDir,
+			Notifier:     conn,
+		}
+		go runCronTicker(ctx, runner)
+
+		mode := telegram.RunModePolling
+		if cfg.TelegramMode == "webhook" {
+			mode = telegram.RunModeWebhook
+		}
+
+		runGateway = func() error {
+			fmt.Fprintf(os.Stderr, "[%s] goated_daemon running (pid=%d, gateway=%s)\n",
+				time.Now().Format(time.RFC3339), os.Getpid(), mode)
+			return conn.Run(ctx, svc, mode, telegram.WebhookOptions{
+				PublicURL:  cfg.TelegramWebhookURL,
+				ListenAddr: cfg.TelegramWebhookAddr,
+				Path:       cfg.TelegramWebhookPath,
+			})
+		}
 	}
-	go runCronTicker(ctx, runner)
 
-	mode := telegram.RunModePolling
-	if cfg.TelegramMode == "webhook" {
-		mode = telegram.RunModeWebhook
-	}
-
-	fmt.Fprintf(os.Stderr, "[%s] goated_daemon running (pid=%d, gateway=%s)\n",
-		time.Now().Format(time.RFC3339), os.Getpid(), mode)
-
-	if err := conn.Run(ctx, svc, mode, telegram.WebhookOptions{
-		PublicURL:  cfg.TelegramWebhookURL,
-		ListenAddr: cfg.TelegramWebhookAddr,
-		Path:       cfg.TelegramWebhookPath,
-	}); err != nil && err != context.Canceled {
+	if err := runGateway(); err != nil && err != context.Canceled {
 		fatal("gateway: %v", err)
 	}
 

@@ -16,10 +16,10 @@ import (
 )
 
 type Runner struct {
-	Store            *db.Store
-	WorkspaceDir     string
-	LogDir           string
-	TelegramNotifier Notifier
+	Store        *db.Store
+	WorkspaceDir string
+	LogDir       string
+	Notifier     Notifier
 }
 
 type Notifier interface {
@@ -138,10 +138,10 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 		return runRecord{}, fmt.Errorf("update cron run: %w", err)
 	}
 
-	// On error, notify via Telegram so the user knows something went wrong
-	if status == "error" && r.TelegramNotifier != nil {
+	// On error, notify the user so they know something went wrong
+	if status == "error" && r.Notifier != nil {
 		errNotify := fmt.Sprintf("Cron job #%d failed. Check log: %s", job.ID, jobLog)
-		_ = r.TelegramNotifier.SendMessage(ctx, job.ChatID, errNotify)
+		_ = r.Notifier.SendMessage(ctx, job.ChatID, errNotify)
 	}
 
 	return runRecord{

@@ -18,6 +18,9 @@ type Config struct {
 	TelegramWebhookURL  string
 	TelegramWebhookAddr string
 	TelegramWebhookPath string
+	SlackBotToken       string
+	SlackAppToken       string
+	SlackChannelID      string
 	DefaultTimezone     string
 	ContextWindowTokens int
 	AdminChatID         string
@@ -25,6 +28,11 @@ type Config struct {
 
 func LoadConfig() Config {
 	loadDotEnv(".env")
+	// Also check next to the executable (e.g. workspace/goat → ../  .env)
+	if exe, err := os.Executable(); err == nil {
+		loadDotEnv(filepath.Join(filepath.Dir(exe), ".env"))
+		loadDotEnv(filepath.Join(filepath.Dir(exe), "..", ".env"))
+	}
 
 	cwd, _ := os.Getwd()
 	workspace := getenvDefault("GOAT_WORKSPACE_DIR", cwd)
@@ -43,6 +51,9 @@ func LoadConfig() Config {
 		TelegramWebhookURL:  os.Getenv("GOAT_TELEGRAM_WEBHOOK_URL"),
 		TelegramWebhookAddr: getenvDefault("GOAT_TELEGRAM_WEBHOOK_LISTEN_ADDR", ":8080"),
 		TelegramWebhookPath: getenvDefault("GOAT_TELEGRAM_WEBHOOK_PATH", "/telegram/webhook"),
+		SlackBotToken:       os.Getenv("GOAT_SLACK_BOT_TOKEN"),
+		SlackAppToken:       os.Getenv("GOAT_SLACK_APP_TOKEN"),
+		SlackChannelID:      os.Getenv("GOAT_SLACK_CHANNEL_ID"),
 		DefaultTimezone:     tz,
 		ContextWindowTokens: ctxTokens,
 		AdminChatID:         os.Getenv("GOAT_ADMIN_CHAT_ID"),

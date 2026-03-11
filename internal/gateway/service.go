@@ -71,7 +71,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 		return responder.SendMessage(ctx, msg.ChatID, friendlyError(err))
 	}
 
-	if err := s.Bridge.SendAndWait(ctx, msg.ChatID, text, 30*time.Minute); err != nil {
+	if err := s.Bridge.SendAndWait(ctx, msg.Channel, msg.ChatID, text, 30*time.Minute); err != nil {
 		return responder.SendMessage(ctx, msg.ChatID, friendlyError(err))
 	}
 	// Claude sends its response directly via ./goat send_user_message

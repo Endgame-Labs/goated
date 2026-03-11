@@ -17,7 +17,7 @@ type TmuxBridge struct {
 	ContextWindowTokens int
 }
 
-func (b *TmuxBridge) SendAndWait(ctx context.Context, chatID string, userPrompt string, timeout time.Duration) error {
+func (b *TmuxBridge) SendAndWait(ctx context.Context, channel, chatID string, userPrompt string, timeout time.Duration) error {
 	if err := b.EnsureSession(ctx); err != nil {
 		return err
 	}
@@ -50,7 +50,7 @@ func (b *TmuxBridge) SendAndWait(ctx context.Context, chatID string, userPrompt 
 		}
 	}
 
-	wrapped := buildPromptEnvelope(chatID, userPrompt)
+	wrapped := buildPromptEnvelope(channel, chatID, userPrompt)
 	if err := b.sendKeys(ctx, wrapped); err != nil {
 		return err
 	}
@@ -291,15 +291,15 @@ func capturePane(ctx context.Context, target string) (string, error) {
 	return runTmuxOutput(ctx, "capture-pane", "-t", target, "-p", "-S", "-")
 }
 
-func buildPromptEnvelope(chatID, userPrompt string) string {
-	return fmt.Sprintf(`User message from Telegram (chat_id=%s):
+func buildPromptEnvelope(channel, chatID, userPrompt string) string {
+	return fmt.Sprintf(`User message via %s (chat_id=%s):
 %s
 
 Respond to the user by piping your markdown response into:
   ./goat send_user_message --chat %s
 
 See GOATED_CLI_README.md for formatting details.
-`, chatID, strings.TrimSpace(userPrompt), chatID)
+`, channel, chatID, strings.TrimSpace(userPrompt), chatID)
 }
 
 func runTmux(ctx context.Context, args ...string) error {

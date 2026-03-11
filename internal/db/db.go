@@ -16,8 +16,9 @@ var (
 	cronRunsBucket     = []byte("cron_runs")
 	subagentRunsBucket = []byte("subagent_runs")
 	metaBucket         = []byte("meta")
+	channelsBucket     = []byte("channels")
 
-	allBuckets = [][]byte{cronsBucket, cronRunsBucket, subagentRunsBucket, metaBucket}
+	allBuckets = [][]byte{cronsBucket, cronRunsBucket, subagentRunsBucket, metaBucket, channelsBucket}
 )
 
 type Store struct {
@@ -366,6 +367,73 @@ func (s *Store) SetMeta(key, value string) error {
 	return s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaBucket)
 		return b.Put([]byte(key), []byte(value))
+	})
+}
+
+// Channel represents a configured messaging gateway (telegram or slack).
+type Channel struct {
+	Name      string            `json:"name"`
+	Type      string            `json:"type"` // "telegram" or "slack"
+	Config    map[string]string `json:"config"`
+	CreatedAt string            `json:"created_at"`
+}
+
+func (s *Store) AddChannel(ch Channel) error {
+	return s.update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(channelsBucket)
+		if b.Get([]byte(ch.Name)) != nil {
+			return fmt.Errorf("channel %q already exists", ch.Name)
+		}
+		if ch.CreatedAt == "" {
+			ch.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		data, err := json.Marshal(ch)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(ch.Name), data)
+	})
+}
+
+func (s *Store) GetChannel(name string) (*Channel, error) {
+	var ch Channel
+	err := s.view(func(tx *bolt.Tx) error {
+		b := tx.Bucket(channelsBucket)
+		data := b.Get([]byte(name))
+		if data == nil {
+			return fmt.Errorf("channel %q not found", name)
+		}
+		return json.Unmarshal(data, &ch)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ch, nil
+}
+
+func (s *Store) AllChannels() ([]Channel, error) {
+	var channels []Channel
+	err := s.view(func(tx *bolt.Tx) error {
+		b := tx.Bucket(channelsBucket)
+		return b.ForEach(func(k, v []byte) error {
+			var ch Channel
+			if err := json.Unmarshal(v, &ch); err != nil {
+				return nil
+			}
+			channels = append(channels, ch)
+			return nil
+		})
+	})
+	return channels, err
+}
+
+func (s *Store) DeleteChannel(name string) error {
+	return s.update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(channelsBucket)
+		if b.Get([]byte(name)) == nil {
+			return fmt.Errorf("channel %q not found", name)
+		}
+		return b.Delete([]byte(name))
 	})
 }
 
