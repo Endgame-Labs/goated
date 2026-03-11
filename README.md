@@ -84,11 +84,11 @@ goated/
 │
 ├── workspace/                  # Agent working directory (GOAT_WORKSPACE_DIR)
 │   ├── goat                    # Agent CLI binary (gitignored)
-│   ├── CLAUDE.md               # Agent instructions
-│   ├── GOATED_CLI_README.md    # Agent CLI reference
-│   ├── CRON.md                 # Instructions for cron-spawned agents
+│   ├── CLAUDE.md               # Agent instructions (committed, depersonalized)
+│   ├── GOATED_CLI_README.md    # Agent CLI reference (committed)
+│   ├── CRON.md                 # Instructions for cron-spawned agents (committed)
 │   ├── creds/                  # File-backed credentials (gitignored)
-│   └── self/                   # Agent identity, memory, projects (see below)
+│   └── self/                   # Agent's private repo (gitignored, see below)
 │
 ├── docs/
 │   └── OPENCLAW_MIGRATION.md   # Migration guide from OpenClaw
@@ -104,14 +104,28 @@ goated/
     └── telegram/               # Chat logs
 ```
 
-### The `workspace/self/` directory
+### What's committed vs. what's personal
 
-The `self/` directory is the agent's private space — identity, memory, notes, and projects. It's gitignored from this repo because it belongs to the agent, not the platform.
+Everything committed in `workspace/` is **depersonalized and reusable** — it's the platform contract that any agent can pick up. Personal state lives in `workspace/self/`, which is gitignored from this repo.
+
+**Committed (platform):**
+- `CLAUDE.md` — agent instructions, response contract, daemon rules
+- `GOATED_CLI_README.md` — CLI reference
+- `CRON.md` — instructions for cron-spawned agents
+
+**Gitignored (personal, lives in `workspace/self/`):**
+- `IDENTITY.md` — name, personality, voice
+- `MEMORY.md` — long-term memory (loaded every session)
+- `USER.md` — info about the human they work with
+- `SOUL.md` — values and beliefs
+- `AGENTS.md` — workspace conventions and safety rules
+- `TODO.md` — agent's personal task list
+- `HEARTBEAT.md` — heartbeat/pulse config and prompts
+- Projects, notes, drafts, tools, and anything else the agent creates
 
 **We recommend making `workspace/self/` its own private Git repo.** This lets the agent:
-- Version its own memory and identity files
-- Push/pull its work independently of the goated platform
-- Keep personal projects, credentials references, and notes in version control
+- Version its own identity, memory, and project files
+- Push/pull independently of the goated platform
 - Survive workspace resets without losing accumulated context
 
 To set this up:
@@ -121,18 +135,11 @@ git init
 git remote add origin git@github.com:your-org/agent-self.git
 ```
 
-Then add to `workspace/CLAUDE.md`:
+Then add to `workspace/self/AGENTS.md` or similar:
 ```
 Your self/ directory is a private git repo. Commit and push meaningful changes
 to your identity, memory, and project files regularly.
 ```
-
-Key files the agent maintains in `self/`:
-- `IDENTITY.md` — name, personality, voice
-- `MEMORY.md` — long-term memory (loaded every session)
-- `USER.md` — info about the human they work with
-- `SOUL.md` — values and beliefs
-- `AGENTS.md` — workspace conventions and safety rules
 
 ## Setup
 
