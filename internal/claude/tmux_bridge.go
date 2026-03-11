@@ -17,44 +17,13 @@ type TmuxBridge struct {
 	ContextWindowTokens int
 }
 
-func (b *TmuxBridge) SendAndWait(ctx context.Context, channel, chatID string, userPrompt string, timeout time.Duration) error {
+func (b *TmuxBridge) SendAndWait(ctx context.Context, channel, chatID string, userPrompt string, _ time.Duration) error {
 	if err := b.EnsureSession(ctx); err != nil {
 		return err
 	}
 
-	target := b.sessionName() + ":0.0"
-
-	// If Claude is already busy (orphaned work from a previous daemon),
-	// wait up to 2 minutes for it to finish. If stalled, clear and re-send.
-	if busy, _ := b.isSessionBusy(ctx); busy {
-		fmt.Fprintf(os.Stderr, "[%s] session busy on startup, waiting for existing work to finish...\n",
-			time.Now().Format(time.RFC3339))
-		finished := b.waitForIdleOrStall(ctx, target, 2*time.Minute)
-		if !finished {
-			fmt.Fprintf(os.Stderr, "[%s] session stalled, sending Escape and retrying\n",
-				time.Now().Format(time.RFC3339))
-			// Send Escape to cancel any stuck input, then wait for prompt
-			_ = runTmux(ctx, "send-keys", "-t", target, "Escape")
-			time.Sleep(2 * time.Second)
-			// If still not at prompt, kill and restart the session
-			if busy2, _ := b.isSessionBusy(ctx); busy2 {
-				fmt.Fprintf(os.Stderr, "[%s] still stuck after Escape, restarting session\n",
-					time.Now().Format(time.RFC3339))
-				if err := b.RestartSession(ctx); err != nil {
-					return err
-				}
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "[%s] existing work finished, proceeding\n",
-				time.Now().Format(time.RFC3339))
-		}
-	}
-
 	wrapped := buildPromptEnvelope(channel, chatID, userPrompt)
-	if err := b.sendKeys(ctx, wrapped); err != nil {
-		return err
-	}
-	return b.waitForPromptReturn(ctx, target, timeout)
+	return b.sendKeys(ctx, wrapped)
 }
 
 // isSessionBusy returns true if Claude is not at the ❯ prompt (i.e., working).
