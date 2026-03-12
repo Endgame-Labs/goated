@@ -7,11 +7,21 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"goated/internal/claude"
 	"goated/internal/db"
+	"goated/internal/tmux"
 )
+
+const contextCheckInterval = 5  // check context every N messages
+const contextCompactThreshold = 80 // compact if context usage exceeds this %
+
+type queuedMessage struct {
+	msg       IncomingMessage
+	responder Responder
+}
 
 type Service struct {
 	Bridge          *claude.TmuxBridge
@@ -25,6 +35,11 @@ type Service struct {
 	DrainCtx context.Context
 
 	inflight sync.WaitGroup
+
+	msgCount     uint64 // atomic; counts non-command messages
+	mu           sync.Mutex
+	compacting   bool
+	compactQueue []queuedMessage
 }
 
 // WaitInflight blocks until all in-flight message handlers have completed.
@@ -66,15 +81,160 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 		return s.handleScheduleCommand(ctx, msg, responder)
 	}
 
+	// If we're currently compacting, queue this message
+	s.mu.Lock()
+	if s.compacting {
+		s.compactQueue = append(s.compactQueue, queuedMessage{msg: msg, responder: responder})
+		s.mu.Unlock()
+		return responder.SendMessage(ctx, msg.ChatID,
+			"Received your additional steering message. Will add it to the queue for once I'm done compacting...")
+	}
+	s.mu.Unlock()
+
 	// Check session health before sending; retry with restart up to 5 times
 	if err := s.ensureHealthySession(ctx, responder); err != nil {
 		return responder.SendMessage(ctx, msg.ChatID, friendlyError(err))
 	}
 
-	if err := s.Bridge.SendAndWait(ctx, msg.Channel, msg.ChatID, text, 30*time.Minute); err != nil {
-		return responder.SendMessage(ctx, msg.ChatID, friendlyError(err))
+	// Periodically check context usage and compact if needed
+	count := atomic.AddUint64(&s.msgCount, 1)
+	if count%contextCheckInterval == 0 {
+		pct := s.Bridge.ContextUsagePercent(msg.ChatID)
+		fmt.Fprintf(os.Stderr, "[%s] context check: ~%d%%\n", time.Now().Format(time.RFC3339), pct)
+		if pct > contextCompactThreshold {
+			return s.compactAndFlush(ctx, msg, responder)
+		}
 	}
-	// Claude sends its response directly via ./goat send_user_message
+
+	return s.sendWithRetry(ctx, msg, responder, text)
+}
+
+const maxSendRetries = 2
+const postSendTimeout = 5 * time.Minute
+
+// sendWithRetry sends a message to Claude and monitors for API errors.
+// If a retryable error is detected, it re-sends up to maxSendRetries times.
+func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, responder Responder, text string) error {
+	for attempt := 0; attempt <= maxSendRetries; attempt++ {
+		if err := s.Bridge.SendAndWait(ctx, msg.Channel, msg.ChatID, text, 30*time.Minute); err != nil {
+			return responder.SendMessage(ctx, msg.ChatID, friendlyError(err))
+		}
+
+		// Wait for Claude to return to prompt, then check for errors
+		idleErr := tmux.WaitForIdle(ctx, postSendTimeout)
+		if idleErr != nil {
+			// Timed out — Claude is still working, which is fine (long task)
+			return nil
+		}
+
+		// Claude returned to prompt — check if it was an error
+		apiErr := tmux.CheckPaneForError(ctx)
+		if apiErr == "" {
+			// No error — Claude processed successfully
+			return nil
+		}
+
+		fmt.Fprintf(os.Stderr, "[%s] API error after send (attempt %d/%d): %s\n",
+			time.Now().Format(time.RFC3339), attempt+1, maxSendRetries+1, apiErr)
+
+		if attempt < maxSendRetries {
+			// Wait a few seconds before retry
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
+
+	// Exhausted retries — notify user
+	return responder.SendMessage(ctx, msg.ChatID,
+		"Claude hit an API error and retries didn't help. Try again in a minute, or use /clear if it persists.")
+}
+
+// compactAndFlush triggers /compact on the Claude session, queues the trigger
+// message (and any that arrive while compacting), then flushes them all once
+// Claude returns to the prompt.
+func (s *Service) compactAndFlush(ctx context.Context, triggerMsg IncomingMessage, responder Responder) error {
+	s.mu.Lock()
+	s.compacting = true
+	s.compactQueue = []queuedMessage{{msg: triggerMsg, responder: responder}}
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		s.compacting = false
+		s.compactQueue = nil
+		s.mu.Unlock()
+	}()
+
+	// Notify user
+	_ = responder.SendMessage(ctx, triggerMsg.ChatID,
+		"Message received. But let me first compact my context window before I address it...")
+
+	// Wait for Claude to be idle before sending /compact
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		busy, err := s.Bridge.IsSessionBusy(ctx)
+		if err != nil || !busy {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	// Send /compact
+	fmt.Fprintf(os.Stderr, "[%s] sending /compact to Claude session\n", time.Now().Format(time.RFC3339))
+	if err := s.Bridge.SendRaw(ctx, "/compact"); err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] /compact send failed: %v\n", time.Now().Format(time.RFC3339), err)
+		// Fall through and try to send messages anyway
+	} else {
+		// Give Claude a moment to start processing before polling
+		time.Sleep(3 * time.Second)
+
+		// Poll until Claude returns to the prompt
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			busy, err := s.Bridge.IsSessionBusy(ctx)
+			if err == nil && !busy {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "[%s] compaction done, flushing queued messages\n", time.Now().Format(time.RFC3339))
+
+	// Grab the full queue
+	s.mu.Lock()
+	queue := make([]queuedMessage, len(s.compactQueue))
+	copy(queue, s.compactQueue)
+	s.mu.Unlock()
+
+	// Build summary of queued message texts
+	var msgTexts []string
+	for _, qm := range queue {
+		msgTexts = append(msgTexts, qm.msg.Text)
+	}
+
+	// Notify user
+	_ = responder.SendMessage(ctx, triggerMsg.ChatID,
+		fmt.Sprintf("Compaction done! Handling your message now:\n\n%s", strings.Join(msgTexts, "\n\n")))
+
+	// Flush all queued messages to tmux
+	for _, qm := range queue {
+		if err := s.Bridge.SendAndWait(ctx, qm.msg.Channel, qm.msg.ChatID, qm.msg.Text, 30*time.Minute); err != nil {
+			_ = qm.responder.SendMessage(ctx, qm.msg.ChatID, friendlyError(err))
+		}
+	}
+
 	return nil
 }
 

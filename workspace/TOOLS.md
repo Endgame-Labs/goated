@@ -182,6 +182,36 @@ func platformCmd() *cobra.Command {
 // mytool platform read --count 10
 ```
 
+## Working directory: always `self/`
+
+Your tool binary lives in `self/tools/`. Any files it writes (archives, vault notes, state, etc.) MUST land inside `self/`, never in the workspace root. The workspace root is the shared goated repo — personal files written there will pollute it.
+
+**Every tool MUST set its working directory to `self/` at startup** using `os.Executable()` to find itself. This is absolute and works regardless of where the binary is invoked from:
+
+```go
+// In your root command's PersistentPreRunE (runs before every subcommand):
+root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+    exe, err := os.Executable()
+    if err != nil {
+        return fmt.Errorf("resolve executable path: %w", err)
+    }
+    exe, err = filepath.EvalSymlinks(exe)
+    if err != nil {
+        return fmt.Errorf("resolve symlinks: %w", err)
+    }
+    // Binary is at self/tools/<name>, so two levels up = self/
+    selfDir := filepath.Dir(filepath.Dir(exe))
+    if err := os.Chdir(selfDir); err != nil {
+        return fmt.Errorf("chdir to self: %w", err)
+    }
+    return nil
+}
+```
+
+After this runs, all relative paths (e.g., `vault/`, `posts/`, `state/`) resolve inside `self/`. No subcommand needs to think about it.
+
+**Required imports** for this pattern: `os`, `path/filepath`.
+
 ## Guidelines
 
 - **One binary, many subcommands.** Don't create separate binaries for every task. Group related operations under subcommands.
@@ -189,5 +219,6 @@ func platformCmd() *cobra.Command {
 - **Flags over env vars.** Use Cobra flags with sensible defaults. Flags are self-documenting via `--help`.
 - **No global state.** Each command function should be self-contained. Read creds and config inside `RunE`, not at package init.
 - **Print structured output.** When tools produce data for other tools, use JSON. When producing output for humans/agents reading the terminal, use readable text.
+- **Never write to the workspace root.** All file output (archives, vault, state, posts) goes in `self/`. The `PersistentPreRunE` pattern above handles this automatically.
 - **Archive to markdown.** If a tool creates or consumes content (posts, messages, etc.), save a copy to a local markdown file for memory. Use a `YYYY-MM-DD` directory structure.
 - **Keep dependencies minimal.** Cobra is the only required external dependency. Resist adding more unless there's a strong reason. The Go stdlib is very capable.

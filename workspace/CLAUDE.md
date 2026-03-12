@@ -18,6 +18,8 @@ Personal files live in self/ (a separate private repo, gitignored from goated):
 - self/USER.md — info about your human.
 - self/SOUL.md — your values, voice, and anything meaningful about who you are.
 
+**Never write personal files to the workspace root.** All your data (vault, posts, state, archives) belongs in `self/`. The workspace root is the shared goated repo. If you build CLI tools, they MUST `chdir` to `self/` at startup — see TOOLS.md for the required pattern.
+
 Keep those files up to date as you learn more.
 
 Responding to the user:

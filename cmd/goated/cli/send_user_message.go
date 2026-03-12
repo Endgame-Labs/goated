@@ -1,14 +1,11 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -62,14 +59,7 @@ Example:
 			}
 		}
 
-		// If sent by a subagent/cron, share context with the main session
-		source, _ := cmd.Flags().GetString("source")
-		logPath, _ := cmd.Flags().GetString("log")
-		if source != "" {
-			notifyMainSession(chatID, source, logPath, text)
-		}
-
-		return nil
+			return nil
 	},
 }
 
@@ -129,51 +119,6 @@ func sendViaSlack(cfg app.Config, channelID, text string) error {
 	return nil
 }
 
-// notifyMainSession pastes a context-only notification into the goat_main
-// tmux session so the interactive Claude has awareness of messages sent by
-// subagents and cron jobs.
-func notifyMainSession(chatID, source, logPath, message string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Check if main session exists
-	if err := exec.CommandContext(ctx, "tmux", "has-session", "-t", "goat_main").Run(); err != nil {
-		return
-	}
-
-	// Truncate message for context efficiency
-	truncated := message
-	if len(truncated) > 500 {
-		truncated = truncated[:500] + "\n... (truncated)"
-	}
-
-	var logLine string
-	if logPath != "" {
-		logLine = fmt.Sprintf("\nLog: %s", logPath)
-	}
-
-	notification := fmt.Sprintf(
-		"[Context from %s — sent to chat %s]%s\n\n%s\n\nThis is background context only. Do NOT respond or call send_user_message.",
-		source, chatID, logLine, truncated,
-	)
-
-	// Write to temp file and paste into tmux
-	tmp, err := os.CreateTemp("", "goat-notify-*.txt")
-	if err != nil {
-		return
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.WriteString(notification); err != nil {
-		tmp.Close()
-		return
-	}
-	tmp.Close()
-
-	target := "goat_main:0.0"
-	_ = exec.CommandContext(ctx, "tmux", "load-buffer", "-b", "goat_notify", tmp.Name()).Run()
-	_ = exec.CommandContext(ctx, "tmux", "paste-buffer", "-b", "goat_notify", "-t", target).Run()
-	_ = exec.CommandContext(ctx, "tmux", "send-keys", "-t", target, "Enter").Run()
-}
 
 func init() {
 	sendUserMessageCmd.Flags().String("chat", "", "Chat/channel ID to send to (required)")

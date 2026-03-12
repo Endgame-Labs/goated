@@ -237,6 +237,48 @@ func (s *Store) SetCronActive(id uint64, active bool) error {
 	})
 }
 
+func (s *Store) SetCronSchedule(id uint64, schedule string) error {
+	return s.update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(cronsBucket)
+		key := itob(id)
+		data := b.Get(key)
+		if data == nil {
+			return fmt.Errorf("cron %d not found", id)
+		}
+		var job CronJob
+		if err := json.Unmarshal(data, &job); err != nil {
+			return err
+		}
+		job.Schedule = schedule
+		updated, err := json.Marshal(job)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, updated)
+	})
+}
+
+func (s *Store) SetCronTimezone(id uint64, timezone string) error {
+	return s.update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(cronsBucket)
+		key := itob(id)
+		data := b.Get(key)
+		if data == nil {
+			return fmt.Errorf("cron %d not found", id)
+		}
+		var job CronJob
+		if err := json.Unmarshal(data, &job); err != nil {
+			return err
+		}
+		job.Timezone = timezone
+		updated, err := json.Marshal(job)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, updated)
+	})
+}
+
 func (s *Store) DeleteCron(id uint64) error {
 	return s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(cronsBucket)

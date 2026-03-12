@@ -6,8 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"goated/internal/db"
+	"goated/internal/tmux"
 )
 
 // BuildPrompt constructs the prompt for a headless subagent.
@@ -66,15 +68,7 @@ func RunSync(ctx context.Context, store *db.Store, opts RunOpts) ([]byte, error)
 	outFile.Close()
 
 	output, _ := os.ReadFile(opts.LogPath)
-
-	if store != nil && runID > 0 {
-		status := "ok"
-		if runErr != nil {
-			status = "error"
-		}
-		_ = store.RecordSubagentFinish(runID, status)
-	}
-
+	handleCompletion(store, runID, runErr, opts)
 	return output, runErr
 }
 
@@ -107,13 +101,7 @@ func RunBackground(store *db.Store, opts RunOpts) (pid int, err error) {
 	go func() {
 		runErr := cmd.Wait()
 		f.Close()
-		if store != nil && runID > 0 {
-			status := "ok"
-			if runErr != nil {
-				status = "error"
-			}
-			_ = store.RecordSubagentFinish(runID, status)
-		}
+		handleCompletion(store, runID, runErr, opts)
 	}()
 
 	return pid, nil
@@ -127,6 +115,61 @@ type RunOpts struct {
 	Source       string // "cron", "cli", "gateway"
 	CronID       uint64 // only for cron-sourced runs
 	ChatID       string
+}
+
+// handleCompletion records the subagent's final status and notifies the main
+// Claude session. Shared by RunSync and RunBackground.
+func handleCompletion(store *db.Store, runID uint64, runErr error, opts RunOpts) {
+	status := "ok"
+	if runErr != nil {
+		status = "error"
+	}
+	if store != nil && runID > 0 {
+		_ = store.RecordSubagentFinish(runID, status)
+	}
+	notifyMainSession(opts, status)
+}
+
+// notifyMainSession pastes a <subagent-notification> into the goat_main tmux
+// session so the interactive Claude knows a job finished.
+func notifyMainSession(opts RunOpts, status string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if !tmux.SessionExists(ctx) {
+		return
+	}
+
+	logTail := readLogTail(opts.LogPath, 1000)
+
+	var attrs []string
+	attrs = append(attrs, fmt.Sprintf("source=%q", opts.Source))
+	attrs = append(attrs, fmt.Sprintf("status=%q", status))
+	if opts.CronID > 0 {
+		attrs = append(attrs, fmt.Sprintf("cron_id=%q", fmt.Sprint(opts.CronID)))
+	}
+	if opts.ChatID != "" {
+		attrs = append(attrs, fmt.Sprintf("chat_id=%q", opts.ChatID))
+	}
+	attrs = append(attrs, fmt.Sprintf("log=%q", opts.LogPath))
+
+	notification := fmt.Sprintf("<subagent-notification %s>\n%s\n</subagent-notification>",
+		strings.Join(attrs, " "), logTail)
+
+	_ = tmux.PasteAndEnter(ctx, notification)
+}
+
+// readLogTail returns the last maxBytes of a log file.
+func readLogTail(path string, maxBytes int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "(log not readable)"
+	}
+	s := strings.TrimSpace(string(data))
+	if len(s) > maxBytes {
+		s = "...\n" + s[len(s)-maxBytes:]
+	}
+	return s
 }
 
 func filterEnv(env []string, remove string) []string {
