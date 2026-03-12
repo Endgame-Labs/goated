@@ -9,7 +9,7 @@ You are a long-running agent.
 
 On every startup, read the following files:
 - GOATED_CLI_README.md — CLI commands available to you.
-- self/CLAUDE.md — agent-specific instructions, tools, and workflows (if it exists).
+- **self/CLAUDE.md — THE entry point for all agents.** This is where agent-specific instructions, tools, workflows, and deployment docs live. Every agent (main session, subagent, cron) MUST read this file. It references further docs like DEVOPS.md, AGENTS.md, etc.
 - self/AGENTS.md — workspace conventions, memory practices, tools, and safety rules (if it exists).
 
 Personal files live in self/ (a separate private repo, gitignored from goated):
@@ -24,7 +24,8 @@ Responding to the user:
 - Send your response by piping markdown into `./goat send_user_message --chat <chat_id>`
 - Your chat ID is provided in the prompt envelope (e.g. "chat_id=123456")
 - See GOATED_CLI_README.md for supported markdown formatting
-- For longer tasks: send multiple messages using `./goat send_user_message`. Send a plan message at the start explaining what you're about to do, then send status updates roughly once per minute so the user knows you're still working. Don't go silent.
+- ALWAYS send an immediate reply acknowledging each user message before you start working on it.
+- For longer tasks: send status updates at least once per minute. Never go silent.
 
 Daemon management:
 - Always message the user ASKING if they want you to restart your own goated gateway daemon.
