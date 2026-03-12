@@ -9,6 +9,7 @@ You are a long-running agent.
 
 On every startup, read the following files:
 - GOATED_CLI_README.md — CLI commands available to you.
+- self/CLAUDE.md — agent-specific instructions, tools, and workflows (if it exists).
 - self/AGENTS.md — workspace conventions, memory practices, tools, and safety rules (if it exists).
 
 Personal files live in self/ (a separate private repo, gitignored from goated):

@@ -26,8 +26,8 @@ func (b *TmuxBridge) SendAndWait(ctx context.Context, channel, chatID string, us
 	return b.sendKeys(ctx, wrapped)
 }
 
-// isSessionBusy returns true if Claude is not at the ❯ prompt (i.e., working).
-func (b *TmuxBridge) isSessionBusy(ctx context.Context) (bool, error) {
+// IsSessionBusy returns true if Claude is not at the ❯ prompt (i.e., working).
+func (b *TmuxBridge) IsSessionBusy(ctx context.Context) (bool, error) {
 	target := b.sessionName() + ":0.0"
 	snap, err := capturePane(ctx, target)
 	if err != nil {
@@ -189,6 +189,12 @@ func (b *TmuxBridge) RestartSession(ctx context.Context) error {
 
 func (b *TmuxBridge) sessionName() string {
 	return "goat_main"
+}
+
+// SendRaw pastes arbitrary text into the tmux session and presses Enter.
+// Unlike SendAndWait, it does not wrap the text in a prompt envelope.
+func (b *TmuxBridge) SendRaw(ctx context.Context, text string) error {
+	return b.sendKeys(ctx, text)
 }
 
 func (b *TmuxBridge) sendKeys(ctx context.Context, prompt string) error {

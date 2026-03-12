@@ -36,6 +36,21 @@ EOF
 - Headers (rendered as bold): `# Heading`
 - Lists: `- item` or `* item`
 
+### Slack formatting tips
+
+When sending messages via Slack, tables and data visualizations render much better inside **code blocks** than as raw markdown tables. Slack doesn't support markdown table syntax natively, so use fenced code blocks for any tabular data:
+
+```
+\`\`\`
+#  | Account      | Value   | Stage
+---|--------------|---------|----------
+1  | Acme Corp    | $150K   | Renewal
+2  | Initech      | $95K    | Discovery
+\`\`\`
+```
+
+This applies to any structured data: reports, comparisons, dashboards, lists with columns. Plain markdown tables will render as messy text in Slack — always wrap them in code blocks.
+
 ### Optional flags
 
 - `--source <name>` — caller source (e.g. `cron`, `subagent`). When set, the message is also shared with the main interactive session for context.
@@ -70,3 +85,14 @@ These flags are typically included in the `send_user_message` command provided i
 ## Control-plane CLI
 
 The control-plane CLI is `./goated` (from the repo root).
+
+### Session management
+
+```sh
+./goated session status                        # Health, busy state, context estimate
+./goated session restart                       # Kill and restart the Claude tmux session
+./goated session send /context                 # Send a slash command or text to Claude
+./goated session send "What are you working on?"
+```
+
+`session send` pastes text directly into the Claude Code tmux pane and presses Enter. Useful for sending Claude Code slash commands (`/context`, `/clear`) or ad-hoc prompts without going through the gateway.

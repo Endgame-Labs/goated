@@ -82,6 +82,7 @@ goated/
 │           ├── daemon.go       # daemon start/stop/restart/status
 │           ├── gateway.go      # Run gateway standalone
 │           ├── send_user_message.go  # Agent → Telegram message push
+│           ├── session.go      # Claude tmux session management (status/restart/send)
 │           ├── spawn_subagent.go     # Launch headless claude
 │           └── start.go        # Foreground start (gateway + cron)
 │
@@ -230,6 +231,17 @@ To find your chat ID, message the bot and send `/chatid`.
 - `/schedule <cron_expr> | <prompt>` — store a scheduled job
 
 Claude sends replies directly via `./goat send_user_message --chat <chat_id>`.
+
+## Session management
+
+```sh
+./goated session status                     # Health, busy state, context estimate
+./goated session restart                    # Kill and restart the Claude tmux session
+./goated session send /context              # Send a slash command or text to Claude
+./goated session send "What are you working on?"
+```
+
+`session send` pastes text directly into the Claude Code tmux pane and presses Enter. Useful for sending Claude Code slash commands (`/context`, `/clear`) or ad-hoc prompts without going through the gateway.
 
 ## Daemon management
 
