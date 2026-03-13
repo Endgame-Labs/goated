@@ -70,9 +70,11 @@ The control-plane CLI is `./goated` (from the repo root).
 
 ```sh
 ./goated session status                        # Health, busy state, context estimate
-./goated session restart                       # Kill and restart the Claude tmux session
-./goated session send /context                 # Send a slash command or text to Claude
+./goated session restart                       # Kill and restart the active runtime tmux session
+./goated session send /context                 # Send a slash command or text to the active runtime
 ./goated session send "What are you working on?"
 ```
 
-`session send` pastes text directly into the Claude Code tmux pane and presses Enter. Useful for sending Claude Code slash commands (`/context`, `/clear`) or ad-hoc prompts without going through the gateway.
+`session send` pastes text directly into the active runtime tmux pane and
+presses Enter. Useful for sending slash commands (`/context`, `/clear`) or
+ad-hoc prompts without going through the gateway.

@@ -10,18 +10,32 @@ import (
 	"time"
 )
 
-const defaultSession = "goat_main"
-const defaultTarget = defaultSession + ":0.0"
+const defaultSession = "goat_claude_main"
 
-// SessionExists checks if the goat_main tmux session is alive.
-func SessionExists(ctx context.Context) bool {
-	return run(ctx, "has-session", "-t", defaultSession) == nil
+func targetForSession(session string) string {
+	return session + ":0.0"
 }
 
-// PasteAndEnter writes text into the goat_main tmux pane and presses Enter.
-// It snapshots the ❯ prompt line before pasting, then polls until the line
+// SessionExists checks if the default tmux session is alive.
+func SessionExists(ctx context.Context) bool {
+	return SessionExistsFor(ctx, defaultSession)
+}
+
+// SessionExistsFor checks if the given tmux session is alive.
+func SessionExistsFor(ctx context.Context, session string) bool {
+	return run(ctx, "has-session", "-t", session) == nil
+}
+
+// PasteAndEnter writes text into the default tmux pane and presses Enter.
+// It snapshots the visible pane before pasting, then polls until the pane
 // changes (confirming the paste landed) before sending Enter.
 func PasteAndEnter(ctx context.Context, text string) error {
+	return PasteAndEnterFor(ctx, defaultSession, text)
+}
+
+// PasteAndEnterFor writes text into the given tmux session pane and presses
+// Enter after the pasted text becomes visible.
+func PasteAndEnterFor(ctx context.Context, session, text string) error {
 	tmp, err := os.CreateTemp("", "goat-paste-*.txt")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
@@ -35,33 +49,43 @@ func PasteAndEnter(ctx context.Context, text string) error {
 		return fmt.Errorf("close temp file: %w", err)
 	}
 
-	// Snapshot the prompt line before pasting
-	promptBefore := findPromptLine(ctx)
+	// Snapshot the visible pane before pasting
+	visibleBefore, _ := CaptureVisibleFor(ctx, session)
 
 	if err := run(ctx, "load-buffer", "-b", "goat", tmp.Name()); err != nil {
 		return fmt.Errorf("load-buffer: %w", err)
 	}
-	if err := run(ctx, "paste-buffer", "-b", "goat", "-t", defaultTarget); err != nil {
+	if err := run(ctx, "paste-buffer", "-b", "goat", "-t", targetForSession(session)); err != nil {
 		return fmt.Errorf("paste-buffer: %w", err)
 	}
 
-	// Poll until prompt line changes (paste arrived) or timeout
-	_ = waitForPromptLineChange(ctx, promptBefore, 5*time.Second)
+	// Poll until the visible pane changes (paste arrived) or timeout.
+	_ = waitForVisibleChange(ctx, session, visibleBefore, 5*time.Second)
 
-	if err := run(ctx, "send-keys", "-t", defaultTarget, "Enter"); err != nil {
+	if err := run(ctx, "send-keys", "-t", targetForSession(session), "Enter"); err != nil {
 		return fmt.Errorf("send enter: %w", err)
 	}
 	return nil
 }
 
-// CapturePane returns the full scrollback of the goat_main pane.
+// CapturePane returns the full scrollback of the default pane.
 func CapturePane(ctx context.Context) (string, error) {
-	return runOutput(ctx, "capture-pane", "-t", defaultTarget, "-p", "-S", "-")
+	return CapturePaneFor(ctx, defaultSession)
+}
+
+// CapturePaneFor returns the full scrollback of the given tmux pane.
+func CapturePaneFor(ctx context.Context, session string) (string, error) {
+	return runOutput(ctx, "capture-pane", "-t", targetForSession(session), "-p", "-S", "-")
 }
 
 // CaptureVisible returns only the visible portion of the pane (no scrollback).
 func CaptureVisible(ctx context.Context) (string, error) {
-	return runOutput(ctx, "capture-pane", "-t", defaultTarget, "-p")
+	return CaptureVisibleFor(ctx, defaultSession)
+}
+
+// CaptureVisibleFor returns only the visible portion of the pane (no scrollback).
+func CaptureVisibleFor(ctx context.Context, session string) (string, error) {
+	return runOutput(ctx, "capture-pane", "-t", targetForSession(session), "-p")
 }
 
 // Run executes an arbitrary tmux command.
@@ -74,23 +98,8 @@ func RunOutput(ctx context.Context, args ...string) (string, error) {
 	return runOutput(ctx, args...)
 }
 
-// findPromptLine returns the last line containing ❯ from the visible pane.
-func findPromptLine(ctx context.Context) string {
-	out, err := runOutput(ctx, "capture-pane", "-t", defaultTarget, "-p")
-	if err != nil {
-		return ""
-	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.Contains(lines[i], "❯") {
-			return lines[i]
-		}
-	}
-	return ""
-}
-
-// waitForPromptLineChange polls until the ❯ line differs from before.
-func waitForPromptLineChange(ctx context.Context, before string, timeout time.Duration) error {
+// waitForVisibleChange polls until the visible pane differs from before.
+func waitForVisibleChange(ctx context.Context, session, before string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -98,13 +107,17 @@ func waitForPromptLineChange(ctx context.Context, before string, timeout time.Du
 			return ctx.Err()
 		default:
 		}
-		current := findPromptLine(ctx)
+		current, err := CaptureVisibleFor(ctx, session)
+		if err != nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
 		if current != before {
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("timed out waiting for prompt line to change")
+	return fmt.Errorf("timed out waiting for pane to change")
 }
 
 // WaitForIdle polls until Claude returns to the ❯ prompt and the pane stops
@@ -112,6 +125,12 @@ func waitForPromptLineChange(ctx context.Context, before string, timeout time.Du
 // visible even while Claude is actively working. Instead we require the pane
 // content to be stable (unchanged across consecutive captures) AND contain ❯.
 func WaitForIdle(ctx context.Context, timeout time.Duration) error {
+	return WaitForIdleFor(ctx, defaultSession, timeout)
+}
+
+// WaitForIdleFor polls until the given session returns to the ❯ prompt and the
+// pane stops changing.
+func WaitForIdleFor(ctx context.Context, session string, timeout time.Duration) error {
 	// Give Claude a moment to start processing
 	time.Sleep(3 * time.Second)
 
@@ -125,7 +144,7 @@ func WaitForIdle(ctx context.Context, timeout time.Duration) error {
 			return ctx.Err()
 		default:
 		}
-		out, err := CaptureVisible(ctx)
+		out, err := CaptureVisibleFor(ctx, session)
 		if err != nil {
 			time.Sleep(2 * time.Second)
 			continue
@@ -148,12 +167,19 @@ func WaitForIdle(ctx context.Context, timeout time.Duration) error {
 // IsIdle checks whether Claude is idle by capturing the pane twice with a
 // short delay. Returns true only if the pane is stable and contains ❯.
 func IsIdle(ctx context.Context) bool {
-	snap1, err := CaptureVisible(ctx)
+	return IsIdleFor(ctx, defaultSession)
+}
+
+// IsIdleFor checks whether the given session is idle by capturing the pane
+// twice with a short delay. Returns true only if the pane is stable and
+// contains ❯.
+func IsIdleFor(ctx context.Context, session string) bool {
+	snap1, err := CaptureVisibleFor(ctx, session)
 	if err != nil {
 		return false
 	}
 	time.Sleep(2 * time.Second)
-	snap2, err := CaptureVisible(ctx)
+	snap2, err := CaptureVisibleFor(ctx, session)
 	if err != nil {
 		return false
 	}
@@ -185,7 +211,14 @@ var retryableErrors = []string{
 // that appeared after a message was sent. Returns the matched error string,
 // or empty if no error found.
 func CheckPaneForError(ctx context.Context) string {
-	out, err := CaptureVisible(ctx)
+	return CheckPaneForErrorFor(ctx, defaultSession)
+}
+
+// CheckPaneForErrorFor examines the last N lines of the given pane for API
+// errors that appeared after a message was sent. Returns the matched error
+// string, or empty if no error found.
+func CheckPaneForErrorFor(ctx context.Context, session string) string {
+	out, err := CaptureVisibleFor(ctx, session)
 	if err != nil {
 		return ""
 	}

@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"goated/internal/app"
-	"goated/internal/claude"
 	cronpkg "goated/internal/cron"
 	"goated/internal/db"
 	"goated/internal/gateway"
+	runtimepkg "goated/internal/runtime"
 	slackpkg "goated/internal/slack"
 	"goated/internal/telegram"
 )
@@ -68,9 +68,14 @@ func main() {
 	}
 	defer store.Close()
 
-	bridge := &claude.TmuxBridge{
-		WorkspaceDir: cfg.WorkspaceDir,
-		LogDir:       cfg.LogDir,
+	runtime, err := runtimepkg.New(cfg)
+	if err != nil {
+		fatal("init runtime: %v", err)
+	}
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer startupCancel()
+	if err := runtimepkg.Validate(startupCtx, runtime, cfg.WorkspaceDir); err != nil {
+		fatal("runtime validation: %v", err)
 	}
 
 	// drainCtx stays alive during shutdown so in-flight handlers can finish
@@ -78,7 +83,7 @@ func main() {
 	defer drainCancel()
 
 	svc := &gateway.Service{
-		Bridge:          bridge,
+		Session:         runtime.Session(),
 		Store:           store,
 		DefaultTimezone: cfg.DefaultTimezone,
 		AdminChatID:     cfg.AdminChatID,
@@ -112,6 +117,7 @@ func main() {
 			WorkspaceDir: cfg.WorkspaceDir,
 			LogDir:       cfg.LogDir,
 			Notifier:     conn,
+			Headless:     runtime.Headless(),
 		}
 		go runCronTicker(ctx, runner)
 
@@ -136,6 +142,7 @@ func main() {
 			WorkspaceDir: cfg.WorkspaceDir,
 			LogDir:       cfg.LogDir,
 			Notifier:     conn,
+			Headless:     runtime.Headless(),
 		}
 		go runCronTicker(ctx, runner)
 

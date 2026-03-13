@@ -6,13 +6,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"goated/internal/app"
-	"goated/internal/claude"
 	"goated/internal/db"
 	"goated/internal/gateway"
+	runtimepkg "goated/internal/runtime"
 	slackpkg "goated/internal/slack"
 	"goated/internal/telegram"
 )
@@ -38,13 +39,18 @@ var gatewayTelegramCmd = &cobra.Command{
 		}
 		defer database.Close()
 
-		bridge := &claude.TmuxBridge{
-			WorkspaceDir: cfg.WorkspaceDir,
-			LogDir:       cfg.LogDir,
+		runtime, err := runtimepkg.New(cfg)
+		if err != nil {
+			return err
+		}
+		startupCtx, startupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer startupCancel()
+		if err := runtimepkg.Validate(startupCtx, runtime, cfg.WorkspaceDir); err != nil {
+			return err
 		}
 
 		svc := &gateway.Service{
-			Bridge:          bridge,
+			Session:         runtime.Session(),
 			Store:           database,
 			DefaultTimezone: cfg.DefaultTimezone,
 			AdminChatID:     cfg.AdminChatID,
@@ -94,13 +100,18 @@ var gatewaySlackCmd = &cobra.Command{
 		}
 		defer database.Close()
 
-		bridge := &claude.TmuxBridge{
-			WorkspaceDir: cfg.WorkspaceDir,
-			LogDir:       cfg.LogDir,
+		runtime, err := runtimepkg.New(cfg)
+		if err != nil {
+			return err
+		}
+		startupCtx, startupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer startupCancel()
+		if err := runtimepkg.Validate(startupCtx, runtime, cfg.WorkspaceDir); err != nil {
+			return err
 		}
 
 		svc := &gateway.Service{
-			Bridge:          bridge,
+			Session:         runtime.Session(),
 			Store:           database,
 			DefaultTimezone: cfg.DefaultTimezone,
 			AdminChatID:     cfg.AdminChatID,

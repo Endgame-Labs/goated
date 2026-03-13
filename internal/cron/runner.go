@@ -12,6 +12,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"goated/internal/agent"
 	"goated/internal/db"
 	"goated/internal/subagent"
 )
@@ -21,6 +22,7 @@ type Runner struct {
 	WorkspaceDir string
 	LogDir       string
 	Notifier     Notifier
+	Headless     agent.HeadlessRuntime
 }
 
 type Notifier interface {
@@ -28,13 +30,16 @@ type Notifier interface {
 }
 
 type runRecord struct {
-	Minute      string `json:"minute"`
-	CronID      uint64 `json:"cron_id"`
-	ChatID      string `json:"chat_id"`
-	Schedule    string `json:"schedule"`
-	Status      string `json:"status"`
-	UserMessage string `json:"user_message,omitempty"`
-	JobLogPath  string `json:"job_log_path"`
+	Minute          string `json:"minute"`
+	CronID          uint64 `json:"cron_id"`
+	ChatID          string `json:"chat_id"`
+	Schedule        string `json:"schedule"`
+	Status          string `json:"status"`
+	UserMessage     string `json:"user_message,omitempty"`
+	JobLogPath      string `json:"job_log_path"`
+	RuntimeProvider string `json:"runtime_provider,omitempty"`
+	RuntimeMode     string `json:"runtime_mode,omitempty"`
+	RuntimeVersion  string `json:"runtime_version,omitempty"`
 }
 
 func (r *Runner) Run(ctx context.Context, now time.Time) error {
@@ -98,8 +103,17 @@ const cronJobTimeout = 1 * time.Hour
 
 func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob) (runRecord, error) {
 	runMinute := nowMinute.Format(time.RFC3339)
+	runtimeMeta := db.ExecutionRuntime{}
+	if r.Headless != nil {
+		version := r.Headless.Version(context.Background())
+		runtimeMeta = db.ExecutionRuntime{
+			Provider: string(r.Headless.Descriptor().Provider),
+			Mode:     "headless_exec",
+			Version:  version,
+		}
+	}
 
-	if err := r.Store.RecordCronRun(job.ID, runMinute, "started", "", ""); err != nil {
+	if err := r.Store.RecordCronRun(job.ID, runMinute, "started", "", "", runtimeMeta); err != nil {
 		return runRecord{}, fmt.Errorf("insert cron run: %w", err)
 	}
 
@@ -108,14 +122,24 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 
 	jobLog := filepath.Join(r.LogDir, "cron", "jobs", fmt.Sprintf("%s-cron-%d.log", nowMinute.Format("20060102-1504"), job.ID))
 
-	var status string
+	var (
+		status string
+		result agent.HeadlessResult
+	)
 	if job.Type == "system" {
 		status = r.runSystem(jobCtx, job, jobLog)
 	} else {
-		status = r.runSubagent(jobCtx, job, jobLog)
+		status, result = r.runSubagent(jobCtx, job, jobLog)
 	}
 
-	if err := r.Store.RecordCronRun(job.ID, runMinute, status, "", jobLog); err != nil {
+	if result.RuntimeProvider != "" {
+		runtimeMeta = db.ExecutionRuntime{
+			Provider: result.RuntimeProvider,
+			Mode:     result.RuntimeMode,
+			Version:  result.RuntimeVersion,
+		}
+	}
+	if err := r.Store.RecordCronRun(job.ID, runMinute, status, "", jobLog, runtimeMeta); err != nil {
 		return runRecord{}, fmt.Errorf("update cron run: %w", err)
 	}
 
@@ -125,28 +149,35 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 	}
 
 	return runRecord{
-		Minute:     runMinute,
-		CronID:     job.ID,
-		ChatID:     job.ChatID,
-		Schedule:   job.Schedule,
-		Status:     status,
-		JobLogPath: jobLog,
+		Minute:          runMinute,
+		CronID:          job.ID,
+		ChatID:          job.ChatID,
+		Schedule:        job.Schedule,
+		Status:          status,
+		JobLogPath:      jobLog,
+		RuntimeProvider: runtimeMeta.Provider,
+		RuntimeMode:     runtimeMeta.Mode,
+		RuntimeVersion:  runtimeMeta.Version,
 	}, nil
 }
 
-func (r *Runner) runSubagent(ctx context.Context, job db.CronJob, jobLog string) string {
+func (r *Runner) runSubagent(ctx context.Context, job db.CronJob, jobLog string) (string, agent.HeadlessResult) {
 	userPrompt := job.Prompt
 	if job.PromptFile != "" {
 		data, err := os.ReadFile(job.PromptFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "cron #%d: read prompt file: %v\n", job.ID, err)
-			return "error"
+			return "error", agent.HeadlessResult{}
 		}
 		userPrompt = string(data)
 	}
 	if strings.TrimSpace(userPrompt) == "" {
 		fmt.Fprintf(os.Stderr, "cron #%d: empty prompt\n", job.ID)
-		return "error"
+		return "error", agent.HeadlessResult{}
+	}
+	if r.Headless == nil {
+		fmt.Fprintf(os.Stderr, "cron #%d: no headless runtime configured\n", job.ID)
+		return "error", agent.HeadlessResult{}
 	}
 
 	promptChatID := job.ChatID
@@ -154,7 +185,7 @@ func (r *Runner) runSubagent(ctx context.Context, job db.CronJob, jobLog string)
 		promptChatID = ""
 	}
 	prompt := subagent.BuildPrompt("Read CRON.md before executing.", userPrompt, promptChatID, "cron", jobLog)
-	_, err := subagent.RunSync(ctx, r.Store, subagent.RunOpts{
+	result, err := r.Headless.RunSync(ctx, r.Store, agent.HeadlessRequest{
 		WorkspaceDir: r.WorkspaceDir,
 		Prompt:       prompt,
 		LogPath:      jobLog,
@@ -164,9 +195,9 @@ func (r *Runner) runSubagent(ctx context.Context, job db.CronJob, jobLog string)
 		Silent:       job.Silent,
 	})
 	if err != nil {
-		return "error"
+		return "error", result
 	}
-	return "ok"
+	return "ok", result
 }
 
 func (r *Runner) runSystem(ctx context.Context, job db.CronJob, jobLog string) string {
@@ -210,4 +241,3 @@ func appendRunRecords(path string, records []runRecord) error {
 	}
 	return nil
 }
-

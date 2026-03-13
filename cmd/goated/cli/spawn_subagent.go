@@ -8,14 +8,16 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"goated/internal/agent"
 	"goated/internal/app"
 	"goated/internal/db"
+	runtimepkg "goated/internal/runtime"
 	"goated/internal/subagent"
 )
 
 var spawnSubagentCmd = &cobra.Command{
 	Use:   "spawn-subagent",
-	Short: "Run a headless Claude subagent in the background",
+	Short: "Run a headless subagent in the background",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prompt, _ := cmd.Flags().GetString("prompt")
 		chatID, _ := cmd.Flags().GetString("chat")
@@ -32,6 +34,11 @@ var spawnSubagentCmd = &cobra.Command{
 		}
 		defer store.Close()
 
+		runtime, err := runtimepkg.New(cfg)
+		if err != nil {
+			return err
+		}
+
 		logDir := filepath.Join(cfg.LogDir, "subagent", "jobs")
 		if err := os.MkdirAll(logDir, 0o755); err != nil {
 			return fmt.Errorf("mkdir subagent log dir: %w", err)
@@ -40,10 +47,10 @@ var spawnSubagentCmd = &cobra.Command{
 		logFile := filepath.Join(logDir, time.Now().Format("20060102-150405")+".log")
 		fullPrompt := subagent.BuildPrompt("", prompt, chatID, "subagent", logFile)
 
-		pid, err := subagent.RunBackground(store, subagent.RunOpts{
+		result, err := runtime.Headless().RunBackground(store, agent.HeadlessRequest{
 			WorkspaceDir: cfg.WorkspaceDir,
-			Prompt:       fullPrompt,
 			LogPath:      logFile,
+			Prompt:       fullPrompt,
 			Source:       "cli",
 			ChatID:       chatID,
 		})
@@ -51,7 +58,7 @@ var spawnSubagentCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("Subagent started (pid=%d, log=%s)\n", pid, logFile)
+		fmt.Printf("Subagent started (pid=%d, log=%s, runtime=%s)\n", result.PID, logFile, result.RuntimeProvider)
 		return nil
 	},
 }

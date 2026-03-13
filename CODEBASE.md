@@ -9,7 +9,9 @@
 │   └── daemon/          # Gateway daemon (./goated_daemon)
 ├── internal/
 │   ├── app/             # Config (env vars, .env loading)
-│   ├── claude/          # TmuxBridge — sends prompts to Claude Code via tmux
+│   ├── agent/           # Provider-neutral runtime contracts
+│   ├── claude/          # Claude runtime implementations
+│   ├── codex/           # Codex runtime implementations
 │   ├── cron/            # Cron runner
 │   ├── db/              # BoltDB persistence (crons, subagent runs, meta)
 │   ├── gateway/         # Gateway service (message routing, auto-compact, retry)
@@ -18,9 +20,10 @@
 │   ├── telegram/        # Telegram connector
 │   ├── tmux/            # Shared tmux helpers
 │   └── util/            # Markdown conversion, etc.
-├── workspace/           # Agent working directory (where Claude Code runs)
+├── workspace/           # Agent working directory (where the active runtime runs)
 │   ├── goat             # Agent CLI binary (built by build.sh)
-│   ├── CLAUDE.md        # Agent runtime instructions
+│   ├── GOATED.md        # Shared runtime instructions
+│   ├── CLAUDE.md        # Claude compatibility shim
 │   ├── TOOLS.md         # Guide for building CLI tools
 │   └── self/            # Private agent data (gitignored)
 ├── build.sh             # Builds all three binaries
@@ -33,8 +36,8 @@
 | Binary | Source | Output path | Purpose |
 |--------|--------|-------------|---------|
 | `goated` | `.` (main.go) | `./goated` | Control CLI (start, daemon, cron, bootstrap) |
-| `goated_daemon` | `./cmd/daemon` | `./goated_daemon` | Gateway daemon (Slack/Telegram <-> Claude) |
-| `goat` | `./cmd/goated` | `./workspace/goat` | Agent CLI (used by Claude inside workspace) |
+| `goated_daemon` | `./cmd/daemon` | `./goated_daemon` | Gateway daemon (Slack/Telegram <-> active runtime) |
+| `goat` | `./cmd/goated` | `./workspace/goat` | Agent CLI (used by the runtime inside workspace) |
 
 All three are statically-compiled Go. The daemon uses ~14 MB RSS. The `goat` CLI is exec'd per-call and exits immediately.
 
@@ -42,7 +45,7 @@ All three are statically-compiled Go. The daemon uses ~14 MB RSS. The `goat` CLI
 
 ```
 ┌──────────┐         ┌──────────────┐     paste    ┌──────────────────────────┐
-│  Slack/  │ ──────> │   Gateway    │ ───────────> │  Claude Code (tmux)      │
+│  Slack/  │ ──────> │   Gateway    │ ───────────> │  Active Runtime (tmux)   │
 │ Telegram │         │   Daemon     │              │  interactive session     │
 │   User   │ <────── │              │ <──────────  │                          │
 └──────────┘         └──────────────┘  exec        └──────────────────────────┘
@@ -52,7 +55,7 @@ All three are statically-compiled Go. The daemon uses ~14 MB RSS. The `goat` CLI
     │                    │                 message   v            v
     └────────────────────┼────────────────────────────      ┌────────────────────┐
                          │                                  │  Subagent          │
-                    ┌────v─────┐                            │  (headless claude) │
+                    ┌────v─────┐                            │ (headless runtime) │
                     │   Cron   │ ────────────────────────>  │                    │
                     │  Runner  │  spawn                     └────────────────────┘
                     └──────────┘
@@ -64,23 +67,23 @@ All three are statically-compiled Go. The daemon uses ~14 MB RSS. The `goat` CLI
 2. Gateway connector receives it (Socket Mode / polling / webhook)
 3. Gateway posts a `_thinking..._` indicator (Slack) or typing animation (Telegram)
 4. Message is wrapped in a **pydict envelope** (Python dict literal with message, source, chat_id, respond_with, formatting)
-5. `TmuxBridge.SendAndWait()` pastes the envelope into the tmux pane via `tmux load-buffer` + `paste-buffer`
+5. The selected session runtime pastes the envelope into the tmux pane via `tmux load-buffer` + `paste-buffer`
 6. Bridge polls for idle using **content-change detection**: pane must be stable (unchanged across consecutive 2s captures) AND contain `❯`
-7. Claude Code processes the request and pipes markdown into `./goat send_user_message --chat <id>`
+7. The active runtime processes the request and pipes markdown into `./goat send_user_message --chat <id>`
 8. The `goat` CLI converts markdown to platform format (Slack mrkdwn / Telegram HTML) and posts it
-9. On Slack, the thinking indicator is deleted; if Claude is still busy, a new one is posted and reaped on idle
+9. On Slack, the thinking indicator is deleted; if the runtime is still busy, a new one is posted and reaped on idle
 
-**Key design choice:** Claude Code sends its own replies. The gateway doesn't scrape output from tmux — Claude is instructed to pipe its response through the `goat` CLI.
+**Key design choice:** the runtime sends its own replies. The gateway doesn't scrape output from tmux — the runtime is instructed to pipe its response through the `goat` CLI.
 
-**Subagents and cron jobs** run as headless `claude -p` processes (not in the tmux session). Each gets its own process, tracked in BoltDB with PID and status.
+**Subagents and cron jobs** run as headless runtime processes (not in the tmux session). Claude uses `claude -p`; Codex uses `codex exec`. Each gets its own process, tracked in BoltDB with PID and status.
 
 ## Gateway features
 
-- **Auto-compact:** checks context usage every 5 messages by pasting `/context` into the session. If usage exceeds 80%, sends `/compact` and queues incoming messages until done.
+- **Auto-compact:** checks context usage every 5 messages using the active runtime's context-estimate capability. If usage exceeds 80% and compaction is supported, sends `/compact` and queues incoming messages until done.
 - **Retry on API errors:** detects 5xx/overloaded errors in the pane and retries up to 2 times.
-- **Session health:** detects auth failures, API errors, connectivity issues. Auto-restarts up to 5 times. DMs admin if recovery fails.
-- **Thinking indicator (Slack):** posts `_thinking..._` on message receipt, deletes it when Claude responds. TTL reaper (4min soft / 20min hard) prevents orphaned indicators.
-- **Idle detection:** content-change based — requires pane to be stable (unchanged across 2s captures) AND contain `❯`. A single prompt check is insufficient because `❯` is visible while Claude is working.
+- **Session health:** classifies recoverable vs non-recoverable runtime failures. Auto-restarts recoverable failures up to 5 times. DMs admin if recovery fails.
+- **Thinking indicator (Slack):** posts `_thinking..._` on message receipt, deletes it when the runtime responds. TTL reaper (4min soft / 20min hard) prevents orphaned indicators.
+- **Idle detection:** runtime-specific. Claude uses stable-pane plus prompt detection; Codex uses pane stability plus blocker classification.
 
 ## Cron system
 
@@ -96,6 +99,7 @@ All config via environment variables or `.env` in the repo root:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GOAT_GATEWAY` | `telegram` | `slack` or `telegram` |
+| `GOAT_AGENT_RUNTIME` | `claude` | `claude` or `codex` |
 | `GOAT_SLACK_BOT_TOKEN` | | Bot User OAuth Token (xoxb-...) |
 | `GOAT_SLACK_APP_TOKEN` | | App-Level Token (xapp-...) for Socket Mode |
 | `GOAT_SLACK_CHANNEL_ID` | | Monitored Slack DM channel |
@@ -103,5 +107,5 @@ All config via environment variables or `.env` in the repo root:
 | `GOAT_DEFAULT_TIMEZONE` | `America/Los_Angeles` | Timezone for cron schedules |
 | `GOAT_ADMIN_CHAT_ID` | | Chat ID for admin alerts |
 | `GOAT_DB_PATH` | `./goated.db` | BoltDB path |
-| `GOAT_WORKSPACE_DIR` | cwd | Agent working directory |
+| `GOAT_WORKSPACE_DIR` | `workspace` | Agent working directory |
 | `GOAT_LOG_DIR` | `./logs` | Log directory |

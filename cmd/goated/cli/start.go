@@ -11,10 +11,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"goated/internal/app"
-	"goated/internal/claude"
 	cronpkg "goated/internal/cron"
 	"goated/internal/db"
 	"goated/internal/gateway"
+	runtimepkg "goated/internal/runtime"
 	slackpkg "goated/internal/slack"
 	"goated/internal/telegram"
 )
@@ -31,16 +31,21 @@ var startCmd = &cobra.Command{
 		}
 		defer store.Close()
 
-		bridge := &claude.TmuxBridge{
-			WorkspaceDir: cfg.WorkspaceDir,
-			LogDir:       cfg.LogDir,
+		runtime, err := runtimepkg.New(cfg)
+		if err != nil {
+			return err
+		}
+		startupCtx, startupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer startupCancel()
+		if err := runtimepkg.Validate(startupCtx, runtime, cfg.WorkspaceDir); err != nil {
+			return err
 		}
 
 		drainCtx, drainCancel := context.WithCancel(context.Background())
 		defer drainCancel()
 
 		svc := &gateway.Service{
-			Bridge:          bridge,
+			Session:         runtime.Session(),
 			Store:           store,
 			DefaultTimezone: cfg.DefaultTimezone,
 			AdminChatID:     cfg.AdminChatID,
@@ -74,6 +79,7 @@ var startCmd = &cobra.Command{
 				WorkspaceDir: cfg.WorkspaceDir,
 				LogDir:       cfg.LogDir,
 				Notifier:     conn,
+				Headless:     runtime.Headless(),
 			}
 			go runCronTicker(ctx, runner)
 
@@ -97,6 +103,7 @@ var startCmd = &cobra.Command{
 				WorkspaceDir: cfg.WorkspaceDir,
 				LogDir:       cfg.LogDir,
 				Notifier:     conn,
+				Headless:     runtime.Headless(),
 			}
 			go runCronTicker(ctx, runner)
 
