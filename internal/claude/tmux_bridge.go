@@ -24,12 +24,36 @@ func (b *TmuxBridge) SendAndWait(ctx context.Context, channel, chatID string, us
 		return err
 	}
 
-	wrapped := buildPromptEnvelope(channel, chatID, userPrompt)
+	wrapped := buildPromptEnvelope(channel, chatID, userPrompt, nil, nil, nil)
 	if err := tmux.PasteAndEnter(ctx, wrapped); err != nil {
 		return err
 	}
 
 	// Wait for Claude to process and return to prompt (or stall)
+	if !b.waitForIdleOrStall(ctx, timeout) {
+		return fmt.Errorf("timed out waiting for claude response")
+	}
+	return nil
+}
+
+func (b *TmuxBridge) SendAndWaitWithAttachments(
+	ctx context.Context,
+	channel, chatID string,
+	userPrompt string,
+	attachments []string,
+	attachmentsFailed []map[string]any,
+	attachmentsSucceeded []map[string]any,
+	timeout time.Duration,
+) error {
+	if err := b.EnsureSession(ctx); err != nil {
+		return err
+	}
+
+	wrapped := buildPromptEnvelope(channel, chatID, userPrompt, attachments, attachmentsFailed, attachmentsSucceeded)
+	if err := tmux.PasteAndEnter(ctx, wrapped); err != nil {
+		return err
+	}
+
 	if !b.waitForIdleOrStall(ctx, timeout) {
 		return fmt.Errorf("timed out waiting for claude response")
 	}
@@ -159,7 +183,8 @@ func (b *TmuxBridge) ContextUsagePercent(_ string) int {
 }
 
 // contextPctRe matches the summary line from /context output:
-//   "claude-opus-4-6 · 85k/200k tokens (42%)"
+//
+//	"claude-opus-4-6 · 85k/200k tokens (42%)"
 var contextPctRe = regexp.MustCompile(`[\d.]+k/[\d.]+k\s+tokens\s+\((\d+)%\)`)
 
 func parseContextOutput(output string) int {
@@ -228,7 +253,12 @@ func (b *TmuxBridge) SendRaw(ctx context.Context, text string) error {
 	return tmux.PasteAndEnter(ctx, text)
 }
 
-func buildPromptEnvelope(channel, chatID, userPrompt string) string {
+func buildPromptEnvelope(
+	channel, chatID, userPrompt string,
+	attachments []string,
+	attachmentsFailed []map[string]any,
+	attachmentsSucceeded []map[string]any,
+) string {
 	var formattingDoc string
 	switch channel {
 	case "slack":
@@ -237,10 +267,26 @@ func buildPromptEnvelope(channel, chatID, userPrompt string) string {
 		formattingDoc = "TELEGRAM_MESSAGE_FORMATTING.md"
 	}
 
+	attVals := make([]any, 0, len(attachments))
+	for _, a := range attachments {
+		attVals = append(attVals, a)
+	}
+	failedVals := make([]any, 0, len(attachmentsFailed))
+	for _, f := range attachmentsFailed {
+		failedVals = append(failedVals, f)
+	}
+	succeededVals := make([]any, 0, len(attachmentsSucceeded))
+	for _, s := range attachmentsSucceeded {
+		succeededVals = append(succeededVals, s)
+	}
+
 	return pydict.EncodeOrdered([]pydict.KV{
 		{"message", strings.TrimSpace(userPrompt)},
 		{"source", channel},
 		{"chat_id", chatID},
+		{"attachments", attVals},
+		{"attachments_failed", failedVals},
+		{"attachments_succeeded", succeededVals},
 		{"respond_with", fmt.Sprintf("cat <<'MD' | ./goat send_user_message --chat %s\nyour **raw markdown** here\nMD", chatID)},
 		{"formatting", formattingDoc},
 		{"instruction", "Send a plan message first if the task will take longer than 30s."},

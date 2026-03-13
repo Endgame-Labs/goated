@@ -15,7 +15,7 @@ import (
 	"goated/internal/tmux"
 )
 
-const contextCheckInterval = 5  // check context every N messages
+const contextCheckInterval = 5     // check context every N messages
 const contextCompactThreshold = 80 // compact if context usage exceeds this %
 
 type queuedMessage struct {
@@ -62,7 +62,8 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 	ctx = s.handleCtx(ctx)
 
 	text := strings.TrimSpace(msg.Text)
-	if text == "" {
+	msg.Text = text
+	if text == "" && len(msg.Attachments) == 0 {
 		return nil
 	}
 
@@ -109,16 +110,25 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 		}
 	}
 
-	return s.sendWithRetry(ctx, msg, responder, text)
+	return s.sendWithRetry(ctx, msg, responder)
 }
 
 const maxSendRetries = 2
 
 // sendWithRetry sends a message to Claude and monitors for API errors.
 // If a retryable error is detected, it re-sends up to maxSendRetries times.
-func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, responder Responder, text string) error {
+func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, responder Responder) error {
 	for attempt := 0; attempt <= maxSendRetries; attempt++ {
-		if err := s.Bridge.SendAndWait(ctx, msg.Channel, msg.ChatID, text, 30*time.Minute); err != nil {
+		if err := s.Bridge.SendAndWaitWithAttachments(
+			ctx,
+			msg.Channel,
+			msg.ChatID,
+			msg.Text,
+			msg.Attachments,
+			attachmentResultsToMaps(msg.AttachmentsFailed),
+			attachmentResultsToMaps(msg.AttachmentsSucceeded),
+			30*time.Minute,
+		); err != nil {
 			return responder.SendMessage(ctx, msg.ChatID, friendlyError(err))
 		}
 
@@ -145,6 +155,24 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 	// Exhausted retries — notify user
 	return responder.SendMessage(ctx, msg.ChatID,
 		"Claude hit an API error and retries didn't help. Try again in a minute, or use /clear if it persists.")
+}
+
+func attachmentResultsToMaps(results []AttachmentResult) []map[string]any {
+	out := make([]map[string]any, 0, len(results))
+	for _, r := range results {
+		out = append(out, map[string]any{
+			"index":       r.Index,
+			"file_id":     r.FileID,
+			"filename":    r.Filename,
+			"path":        r.Path,
+			"outcome":     r.Outcome,
+			"reason_code": r.ReasonCode,
+			"reason":      r.Reason,
+			"bytes":       r.Bytes,
+			"mime_type":   r.MIMEType,
+		})
+	}
+	return out
 }
 
 // compactAndFlush triggers /compact on the Claude session, queues the trigger

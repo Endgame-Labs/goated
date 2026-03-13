@@ -125,3 +125,33 @@ VALID_KEY_TEST=valid
 		t.Errorf("VALID_KEY_TEST = %q, want valid", got)
 	}
 }
+
+func TestGetenvNumericDefaults(t *testing.T) {
+	os.Unsetenv("TEST_NUM64")
+	if got := getenvInt64Default("TEST_NUM64", 7); got != 7 {
+		t.Fatalf("got %d, want 7", got)
+	}
+	os.Setenv("TEST_NUM64", "15")
+	if got := getenvInt64Default("TEST_NUM64", 7); got != 15 {
+		t.Fatalf("got %d, want 15", got)
+	}
+	os.Setenv("TEST_NUM64", "bad")
+	if got := getenvInt64Default("TEST_NUM64", 7); got != 7 {
+		t.Fatalf("got %d, want fallback 7", got)
+	}
+	os.Unsetenv("TEST_NUM64")
+
+	os.Unsetenv("TEST_NUM")
+	if got := getenvIntDefault("TEST_NUM", 3); got != 3 {
+		t.Fatalf("got %d, want 3", got)
+	}
+	os.Setenv("TEST_NUM", "9")
+	if got := getenvIntDefault("TEST_NUM", 3); got != 9 {
+		t.Fatalf("got %d, want 9", got)
+	}
+	os.Setenv("TEST_NUM", "-1")
+	if got := getenvIntDefault("TEST_NUM", 3); got != 3 {
+		t.Fatalf("got %d, want fallback 3", got)
+	}
+	os.Unsetenv("TEST_NUM")
+}

@@ -106,7 +106,12 @@ var gatewaySlackCmd = &cobra.Command{
 			AdminChatID:     cfg.AdminChatID,
 		}
 
-		conn, err := slackpkg.NewConnector(cfg.SlackBotToken, cfg.SlackAppToken, cfg.SlackChannelID, database)
+		conn, err := slackpkg.NewConnector(cfg.SlackBotToken, cfg.SlackAppToken, cfg.SlackChannelID, database, slackpkg.AttachmentConfig{
+			RootPath:      cfg.SlackAttachmentsRoot,
+			MaxBytes:      cfg.SlackAttachmentMaxBytes,
+			MaxTotalBytes: cfg.SlackAttachmentMaxTotalBytes,
+			MaxParallel:   cfg.SlackAttachmentMaxParallel,
+		})
 		if err != nil {
 			return err
 		}

@@ -58,7 +58,7 @@ func TestParseContextOutput(t *testing.T) {
 }
 
 func TestBuildPromptEnvelope_Slack(t *testing.T) {
-	result := buildPromptEnvelope("slack", "C12345", "hello world")
+	result := buildPromptEnvelope("slack", "C12345", "hello world", []string{"workspace/tmp/slack/attachments/a.png"}, []map[string]any{{"reason_code": "too_large"}}, []map[string]any{{"path": "workspace/tmp/slack/attachments/a.png"}})
 
 	if !strings.Contains(result, `"message"`) {
 		t.Error("missing message key")
@@ -81,10 +81,19 @@ func TestBuildPromptEnvelope_Slack(t *testing.T) {
 	if !strings.Contains(result, `./goat send_user_message --chat C12345`) {
 		t.Error("missing respond_with command")
 	}
+	if !strings.Contains(result, `"attachments_failed"`) {
+		t.Error("missing attachments_failed key")
+	}
+	if !strings.Contains(result, `"reason_code": "too_large"`) {
+		t.Error("missing failed attachment reason_code")
+	}
+	if !strings.Contains(result, `"attachments_succeeded"`) {
+		t.Error("missing attachments_succeeded key")
+	}
 }
 
 func TestBuildPromptEnvelope_Telegram(t *testing.T) {
-	result := buildPromptEnvelope("telegram", "999", "test msg")
+	result := buildPromptEnvelope("telegram", "999", "test msg", nil, nil, nil)
 
 	if !strings.Contains(result, "TELEGRAM_MESSAGE_FORMATTING.md") {
 		t.Error("should use TELEGRAM formatting doc for telegram channel")
@@ -95,14 +104,14 @@ func TestBuildPromptEnvelope_Telegram(t *testing.T) {
 }
 
 func TestBuildPromptEnvelope_UnknownChannelDefaultsTelegram(t *testing.T) {
-	result := buildPromptEnvelope("unknown", "111", "test")
+	result := buildPromptEnvelope("unknown", "111", "test", nil, nil, nil)
 	if !strings.Contains(result, "TELEGRAM_MESSAGE_FORMATTING.md") {
 		t.Error("unknown channel should default to telegram formatting doc")
 	}
 }
 
 func TestBuildPromptEnvelope_TrimWhitespace(t *testing.T) {
-	result := buildPromptEnvelope("slack", "C1", "  hello  ")
+	result := buildPromptEnvelope("slack", "C1", "  hello  ", nil, nil, nil)
 	if !strings.Contains(result, "hello") {
 		t.Error("missing trimmed message")
 	}
@@ -113,7 +122,7 @@ func TestBuildPromptEnvelope_TrimWhitespace(t *testing.T) {
 }
 
 func TestBuildPromptEnvelope_IsPydictFormat(t *testing.T) {
-	result := buildPromptEnvelope("slack", "C1", "test")
+	result := buildPromptEnvelope("slack", "C1", "test", nil, nil, nil)
 	// Should start with { and end with }
 	trimmed := strings.TrimSpace(result)
 	if !strings.HasPrefix(trimmed, "{") || !strings.HasSuffix(trimmed, "}") {

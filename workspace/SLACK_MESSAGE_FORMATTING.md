@@ -37,3 +37,15 @@ Your markdown is auto-converted to Slack's mrkdwn format by `send_user_message`.
 ## Message size limit
 
 Slack caps messages at **4,000 characters**. Longer messages are automatically split at newline boundaries. Keep this in mind for large outputs — prefer concise responses or split across multiple `send_user_message` calls.
+
+## Attachment ingest notes
+
+- Incoming Slack attachment paths are passed as workspace-relative paths (for example `workspace/tmp/slack/attachments/...`).
+- The envelope always includes `attachments_failed` with machine-readable `reason_code` values.
+- Current `reason_code` values:
+  - `unsupported_type`
+  - `too_large`
+  - `download_failed`
+  - `corrupt`
+  - `unauthorized`
+  - `deduped`

@@ -2,11 +2,27 @@ package gateway
 
 import "context"
 
+type AttachmentResult struct {
+	Index      int
+	FileID     string
+	Filename   string
+	Path       string
+	Outcome    string
+	ReasonCode string
+	Reason     string
+	Bytes      int64
+	MIMEType   string
+}
+
 type IncomingMessage struct {
-	Channel string
-	ChatID  string
-	UserID  string
-	Text    string
+	Channel              string
+	ChatID               string
+	UserID               string
+	Text                 string
+	Attachments          []string
+	AttachmentResults    []AttachmentResult
+	AttachmentsFailed    []AttachmentResult
+	AttachmentsSucceeded []AttachmentResult
 }
 
 type Responder interface {

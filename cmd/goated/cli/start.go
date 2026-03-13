@@ -64,7 +64,12 @@ var startCmd = &cobra.Command{
 				return fmt.Errorf("GOAT_SLACK_CHANNEL_ID is required")
 			}
 
-			conn, err := slackpkg.NewConnector(cfg.SlackBotToken, cfg.SlackAppToken, cfg.SlackChannelID, store)
+			conn, err := slackpkg.NewConnector(cfg.SlackBotToken, cfg.SlackAppToken, cfg.SlackChannelID, store, slackpkg.AttachmentConfig{
+				RootPath:      cfg.SlackAttachmentsRoot,
+				MaxBytes:      cfg.SlackAttachmentMaxBytes,
+				MaxTotalBytes: cfg.SlackAttachmentMaxTotalBytes,
+				MaxParallel:   cfg.SlackAttachmentMaxParallel,
+			})
 			if err != nil {
 				return err
 			}
