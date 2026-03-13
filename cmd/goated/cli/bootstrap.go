@@ -21,6 +21,14 @@ var bootstrapCmd = &cobra.Command{
 		fmt.Println("=== goated bootstrap ===")
 		fmt.Println()
 
+		// Seed .env from .env.example if it doesn't exist yet
+		if _, err := os.Stat(".env"); os.IsNotExist(err) {
+			if example, err := os.ReadFile(".env.example"); err == nil {
+				_ = os.WriteFile(".env", example, 0o600)
+				fmt.Println("Created .env from .env.example")
+			}
+		}
+
 		// Prompt for common settings first
 		existing := loadExistingEnv(".env")
 		tz := prompt(reader, "Default timezone", withDefault(existing["GOAT_DEFAULT_TIMEZONE"], "America/Los_Angeles"))

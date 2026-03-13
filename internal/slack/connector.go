@@ -18,10 +18,6 @@ import (
 	"goated/internal/util"
 )
 
-// ThinkingFile is the path where the thinking message timestamp is stored
-// so that CLI processes (send_user_message) can update it with the real response.
-const ThinkingFile = "/tmp/goated-slack-thinking"
-
 // OffsetStore persists metadata so restarts can track state.
 type OffsetStore interface {
 	GetMeta(key string) string
@@ -206,7 +202,7 @@ func (c *Connector) postThinking(channel string) {
 	c.mu.Lock()
 	c.thinkingTS = ts
 	c.mu.Unlock()
-	_ = os.WriteFile(ThinkingFile, []byte(ts), 0644)
+	_ = WriteThinkingTS(ts)
 	go reapThinkingIndicator(c.api, channel, ts)
 }
 
@@ -221,9 +217,10 @@ func (c *Connector) clearThinkingIfNeeded(channel string) bool {
 	if ts == "" {
 		return false
 	}
-	// Delete both the file and the Slack message; if the CLI already
-	// deleted them, these are harmless no-ops.
-	_ = os.Remove(ThinkingFile)
+	// Atomically claim the file so no other process can also try to delete
+	// the Slack message. If ClaimThinkingTS returns empty, the CLI already
+	// handled it — but we still delete using our in-memory ts.
+	ClaimThinkingTS()
 	_, _, _ = c.api.DeleteMessage(channel, ts)
 	return true
 }
@@ -262,10 +259,8 @@ func reapThinkingIndicator(api *slack.Client, channel, ts string) {
 
 	// Delete the Slack message (no-op if already deleted)
 	_, _, _ = api.DeleteMessage(channel, ts)
-	// Only remove ThinkingFile if it still holds our timestamp
-	if thinkingFileHasTS(ts) {
-		_ = os.Remove(ThinkingFile)
-	}
+	// Atomically claim and remove ThinkingFile if it still holds our timestamp
+	ClaimThinkingTS()
 	fmt.Fprintf(os.Stderr, "TTL reaper cleaned up thinking indicator %s in channel %s\n", ts, channel)
 }
 

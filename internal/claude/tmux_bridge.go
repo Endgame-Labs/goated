@@ -19,13 +19,21 @@ type TmuxBridge struct {
 	LogDir       string
 }
 
-func (b *TmuxBridge) SendAndWait(ctx context.Context, channel, chatID string, userPrompt string, _ time.Duration) error {
+func (b *TmuxBridge) SendAndWait(ctx context.Context, channel, chatID string, userPrompt string, timeout time.Duration) error {
 	if err := b.EnsureSession(ctx); err != nil {
 		return err
 	}
 
 	wrapped := buildPromptEnvelope(channel, chatID, userPrompt)
-	return tmux.PasteAndEnter(ctx, wrapped)
+	if err := tmux.PasteAndEnter(ctx, wrapped); err != nil {
+		return err
+	}
+
+	// Wait for Claude to process and return to prompt (or stall)
+	if !b.waitForIdleOrStall(ctx, timeout) {
+		return fmt.Errorf("timed out waiting for claude response")
+	}
+	return nil
 }
 
 // IsSessionBusy returns true if Claude is not idle. Uses content-change
@@ -233,7 +241,7 @@ func buildPromptEnvelope(channel, chatID, userPrompt string) string {
 		{"message", strings.TrimSpace(userPrompt)},
 		{"source", channel},
 		{"chat_id", chatID},
-		{"respond_with", fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
+		{"respond_with", fmt.Sprintf("cat <<'MD' | ./goat send_user_message --chat %s\nyour **raw markdown** here\nMD", chatID)},
 		{"formatting", formattingDoc},
 		{"instruction", "Send a plan message first if the task will take longer than 30s."},
 	})

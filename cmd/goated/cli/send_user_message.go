@@ -111,11 +111,9 @@ func sendViaSlack(cfg app.Config, channelID, text string) error {
 	client := slackapi.New(token)
 	mrkdwn := util.MarkdownToSlackMrkdwn(text)
 
-	// If there's a thinking indicator, delete it before posting the real response
+	// Atomically claim the thinking indicator so no other process can race us
 	hadThinking := false
-	if data, err := os.ReadFile(slackpkg.ThinkingFile); err == nil && len(data) > 0 {
-		_ = os.Remove(slackpkg.ThinkingFile)
-		ts := strings.TrimSpace(string(data))
+	if ts := slackpkg.ClaimThinkingTS(); ts != "" {
 		_, _, _ = client.DeleteMessage(channelID, ts)
 		hadThinking = true
 	}
@@ -172,13 +170,11 @@ func waitAndClearThinking(client *slackapi.Client, channelID string) {
 	// Poll for idle (pane stable + ❯ prompt)
 	tmux.WaitForIdle(ctx, 5*time.Minute)
 
-	// If ThinkingFile still exists, delete the thinking message
-	data, err := os.ReadFile(slackpkg.ThinkingFile)
-	if err != nil || len(data) == 0 {
-		return // another send_user_message already handled it
+	// Atomically claim the thinking indicator; if empty, another process handled it
+	ts := slackpkg.ClaimThinkingTS()
+	if ts == "" {
+		return
 	}
-	_ = os.Remove(slackpkg.ThinkingFile)
-	ts := strings.TrimSpace(string(data))
 	_, _, _ = client.DeleteMessage(channelID, ts)
 	fmt.Fprintf(os.Stderr, "Cleaned up orphaned thinking indicator in channel %s\n", channelID)
 }
@@ -193,7 +189,7 @@ func postSlackThinking(client *slackapi.Client, channelID string) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(slackpkg.ThinkingFile, []byte(ts), 0644)
+	_ = slackpkg.WriteThinkingTS(ts)
 	go slackpkg.ReapThinkingIndicator(client, channelID, ts)
 }
 

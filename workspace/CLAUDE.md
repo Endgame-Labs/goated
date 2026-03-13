@@ -26,7 +26,7 @@ Keep those files up to date as you learn more.
 
 Responding to the user:
 - Messages arrive as a **pydict** (Python dict literal). See PYDICT_FORMAT.md for the format spec.
-- Extract `respond_with` and `chat_id` from the envelope, then pipe markdown into the command.
+- Extract `respond_with` from the envelope — it shows how to pipe raw markdown into the send command.
 - See the `formatting` field in the envelope for which formatting doc applies (e.g. SLACK_MESSAGE_FORMATTING.md).
 - ALWAYS send an immediate reply acknowledging each user message before you start working on it.
 - For longer tasks: send status updates at least once per minute. Never go silent.

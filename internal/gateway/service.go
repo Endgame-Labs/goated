@@ -113,7 +113,6 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 }
 
 const maxSendRetries = 2
-const postSendTimeout = 5 * time.Minute
 
 // sendWithRetry sends a message to Claude and monitors for API errors.
 // If a retryable error is detected, it re-sends up to maxSendRetries times.
@@ -121,13 +120,6 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 	for attempt := 0; attempt <= maxSendRetries; attempt++ {
 		if err := s.Bridge.SendAndWait(ctx, msg.Channel, msg.ChatID, text, 30*time.Minute); err != nil {
 			return responder.SendMessage(ctx, msg.ChatID, friendlyError(err))
-		}
-
-		// Wait for Claude to return to prompt, then check for errors
-		idleErr := tmux.WaitForIdle(ctx, postSendTimeout)
-		if idleErr != nil {
-			// Timed out — Claude is still working, which is fine (long task)
-			return nil
 		}
 
 		// Claude returned to prompt — check if it was an error
@@ -187,6 +179,27 @@ func (s *Service) compactAndFlush(ctx context.Context, triggerMsg IncomingMessag
 			break
 		}
 		time.Sleep(2 * time.Second)
+	}
+
+	// Ask Claude to flush memory before compaction
+	fmt.Fprintf(os.Stderr, "[%s] requesting memory flush before compaction\n", time.Now().Format(time.RFC3339))
+	if err := s.Bridge.SendRaw(ctx, "Before I compact your context, save any important state to your self/ files now. Be quick — just key facts, decisions, and in-progress work."); err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] memory flush request failed: %v\n", time.Now().Format(time.RFC3339), err)
+		// Continue with compaction anyway
+	} else {
+		time.Sleep(3 * time.Second)
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			busy, err := s.Bridge.IsSessionBusy(ctx)
+			if err == nil && !busy {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
 	}
 
 	// Send /compact
