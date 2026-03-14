@@ -51,6 +51,8 @@ These flags are typically included in the `send_user_message` command provided i
 
 ## Cron management
 
+Use Goated cron for all recurring work. Do **not** use Codex or Claude Code built-in scheduling systems.
+
 - Add cron (inline): `./goat cron add --chat <chat_id> --schedule "0 8 * * *" --prompt "Send me Berkeley weather"`
 - Add cron (file): `./goat cron add --chat <chat_id> --schedule "0 8 * * *" --prompt-file /path/to/prompt.md`
 - List crons: `./goat cron list --chat <chat_id>`

@@ -11,6 +11,7 @@ You are a long-running agent.
 - CLI documentation is in `GOATED_CLI_README.md`.
 - Guide for building your own CLI tools is in `TOOLS.md`.
 - Agent credentials are file-backed in `creds/*.txt` and managed via `./goat`.
+- For any repeated/scheduled task, use `./goat cron ...` (or `./goated cron ...` from repo root). Do **not** use Codex or Claude built-in scheduling systems.
 
 On every startup, read the following files:
 - `GOATED_CLI_README.md` — CLI commands available to you.
