@@ -66,3 +66,14 @@ scripts/setup_machine.sh doctor
 scripts/setup_machine.sh install-system
 scripts/setup_machine.sh install-go
 ```
+
+## Daemon watchdog
+
+A cron watchdog ensures the daemon is always running (auto-starts it if it dies):
+
+```bash
+# Install (runs every 2 minutes):
+(crontab -l 2>/dev/null; echo '*/2 * * * * /path/to/goated/scripts/watchdog.sh') | crontab -
+```
+
+Logs to `logs/watchdog.log`.

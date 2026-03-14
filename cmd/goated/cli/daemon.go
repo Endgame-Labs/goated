@@ -50,29 +50,12 @@ var daemonRestartCmd = &cobra.Command{
 			Reason:    reason,
 		}
 
-		// Wait for in-flight subagents before stopping
-		if store, err := db.Open(cfg.DBPath); err == nil {
-			waitForSubagents(store)
-			store.Close()
-		}
-
-		// Stop existing daemon gracefully
-		if oldPID, err := stopDaemon(pidPath); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-		} else if oldPID > 0 {
-			rec.OldPID = oldPID
-			fmt.Printf("Stopped daemon (pid=%d)\n", oldPID)
-		} else {
-			fmt.Println("No running daemon found.")
-		}
-
-		// Start new daemon — resolve binary next to this executable, then cwd, then PATH
+		// Resolve daemon binary early — needed for both guardian and start
 		daemonBin := ""
 		candidates := []string{
 			filepath.Join(filepath.Dir(os.Args[0]), "goated_daemon"),
 			"./goated_daemon",
 		}
-		// Resolve os.Args[0] to absolute path for a better candidate
 		if exe, err := os.Executable(); err == nil {
 			candidates = append([]string{filepath.Join(filepath.Dir(exe), "goated_daemon")}, candidates...)
 		}
@@ -88,6 +71,40 @@ var daemonRestartCmd = &cobra.Command{
 			} else {
 				return fmt.Errorf("goated_daemon binary not found; run build.sh first")
 			}
+		}
+		// Convert to absolute path so the guardian works regardless of cwd
+		if abs, err := filepath.Abs(daemonBin); err == nil {
+			daemonBin = abs
+		}
+
+		// Wait for in-flight subagents before stopping
+		if store, err := db.Open(cfg.DBPath); err == nil {
+			waitForSubagents(store)
+			store.Close()
+		}
+
+		// Spawn a guardian process that will start the daemon if the restart
+		// command itself gets killed (e.g. agent process interrupted).
+		// The daemon binary is safe to call redundantly — it exits if one
+		// is already running.
+		guardianCmd := exec.Command("sh", "-c",
+			fmt.Sprintf("sleep 15 && %s >> %s 2>&1 || true",
+				daemonBin, filepath.Join(cfg.LogDir, "goated_daemon.log")))
+		guardianCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := guardianCmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to start restart guardian: %v\n", err)
+		} else {
+			fmt.Printf("Started restart guardian (pid=%d) as safety net\n", guardianCmd.Process.Pid)
+		}
+
+		// Stop existing daemon gracefully
+		if oldPID, err := stopDaemon(pidPath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		} else if oldPID > 0 {
+			rec.OldPID = oldPID
+			fmt.Printf("Stopped daemon (pid=%d)\n", oldPID)
+		} else {
+			fmt.Println("No running daemon found.")
 		}
 
 		out, err := exec.Command(daemonBin).Output()

@@ -326,10 +326,10 @@ func (s *Service) friendlyError(err error) string {
 		return "The bot was restarted while processing your message. Please send it again."
 	case errors.Is(err, context.DeadlineExceeded):
 		return name + " took too long to respond (timed out). Try again or simplify your request."
-	case strings.Contains(strings.ToLower(err.Error()), "timed out waiting"):
-		return name + " didn't finish in time. Try again or use /clear to start a fresh session."
 	case strings.Contains(err.Error(), "session readiness"):
 		return name + " session failed to start. Try /clear to reset, or check that the daemon is healthy."
+	case strings.Contains(strings.ToLower(err.Error()), "timed out waiting"):
+		return name + " didn't finish in time. Try again or use /clear to start a fresh session."
 	case strings.Contains(err.Error(), "pane to change"):
 		return "Failed to send your message to " + name + ". The session may be stuck — try /clear."
 	case strings.Contains(err.Error(), "requires manual intervention"):

@@ -287,6 +287,17 @@ The active runtime sends replies directly via `./goat send_user_message --chat <
 
 Restarts wait for in-flight messages to flush. Reasons are logged to `logs/restarts.jsonl`.
 
+### Watchdog cron
+
+A cron watchdog ensures the daemon is always running. If the daemon dies for any reason, it will be restarted within 2 minutes:
+
+```sh
+# Install the watchdog:
+(crontab -l 2>/dev/null; echo '*/2 * * * * /path/to/goated/scripts/watchdog.sh') | crontab -
+```
+
+Logs to `logs/watchdog.log`.
+
 ## Agent CLI
 
 The agent's tmux session runs inside `workspace/`, so all agent commands use `./goat` (not `workspace/goat`).
@@ -334,6 +345,8 @@ Every 5 messages, the gateway asks the active runtime for a context estimate. If
 - On startup, detects orphaned work from previous daemon and waits or recovers
 - Telegram update offset is persisted so restarts don't replay old messages
 - Cron jobs are deduped — a job won't fire again if its previous run is still in-flight
+- **Restart guardian:** `goated daemon restart` spawns a detached safety-net process that ensures the new daemon starts even if the restart command itself is interrupted
+- **Watchdog cron:** optional `scripts/watchdog.sh` checks every 2 minutes that the daemon is alive and restarts it if not
 
 ## Migrating from OpenClaw
 

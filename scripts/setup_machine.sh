@@ -171,9 +171,20 @@ doctor() {
   fi
 
   echo
+  echo "Daemon watchdog"
+  if crontab -l 2>/dev/null | grep -q 'watchdog\.sh'; then
+    print_status "watchdog" "installed (crontab)"
+  else
+    print_status "watchdog" "not installed"
+  fi
+
+  echo
   echo "Helpful next steps"
   if ! find_tool go >/dev/null 2>&1 || ! check_go_version || ! find_tool gofmt >/dev/null 2>&1; then
     echo "- Install Go $GO_VERSION: scripts/setup_machine.sh install-go"
+  fi
+  if ! crontab -l 2>/dev/null | grep -q 'watchdog\.sh'; then
+    echo "- Install watchdog cron: (crontab -l 2>/dev/null; echo '*/2 * * * * $ROOT_DIR/scripts/watchdog.sh') | crontab -"
   fi
   if ! have claude; then
     echo "- Install and authenticate Claude Code if you want GOAT_AGENT_RUNTIME=claude"
