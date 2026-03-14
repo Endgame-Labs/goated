@@ -20,8 +20,7 @@ var tuiBulletRe = regexp.MustCompile(`(?m)^[●✽✢•▸▹▪]\ ?`)
 
 func ExtractUserMessage(s string) string {
 	// Strip ANSI and TUI bullet prefixes before matching delimiters.
-	clean := stripAnsi(s)
-	clean = tuiBulletRe.ReplaceAllString(clean, "")
+	clean := CleanTerminalText(s)
 
 	matches := userMessageRe.FindAllStringSubmatch(clean, -1)
 	if len(matches) == 0 {
@@ -43,6 +42,12 @@ func ExtractUserMessage(s string) string {
 		return ""
 	}
 	return msg
+}
+
+func CleanTerminalText(s string) string {
+	clean := stripAnsi(s)
+	clean = tuiBulletRe.ReplaceAllString(clean, "")
+	return strings.TrimSpace(clean)
 }
 
 func stripAnsi(s string) string {

@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"goated/internal/app"
+	runtimepkg "goated/internal/runtime"
 	slackpkg "goated/internal/slack"
-	"goated/internal/tmux"
 	"goated/internal/util"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -63,7 +63,7 @@ Example:
 			}
 		}
 
-			return nil
+		return nil
 	},
 }
 
@@ -128,47 +128,44 @@ func sendViaSlack(cfg app.Config, channelID, text string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Message sent to channel %s (%d chars)\n", channelID, len(text))
 
-	// If we cleared a thinking indicator, check if Claude is still busy.
+	// If we cleared a thinking indicator, check if the active runtime is still busy.
 	// If so, post a new thinking indicator, then poll for idle and clean it up.
 	if hadThinking {
-		if isClaudeBusy() {
+		if isRuntimeBusy(cfg) {
 			postSlackThinking(client, channelID)
-			// Wait for Claude to go idle, then delete the thinking indicator
-			waitAndClearThinking(client, channelID)
+			waitAndClearThinking(cfg, client, channelID)
 		}
 	}
 
 	return nil
 }
 
-
-// isClaudeBusy checks whether Claude is still working by confirming the pane
-// is actively changing for at least 1 second. Takes two snapshots 1s apart;
-// if both differ from each other, Claude is busy.
-func isClaudeBusy() bool {
+func isRuntimeBusy(cfg app.Config) bool {
+	runtime, err := runtimepkg.New(cfg)
+	if err != nil {
+		return false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	snap1, err := tmux.CaptureVisible(ctx)
+	state, err := runtime.Session().GetSessionState(ctx)
 	if err != nil {
 		return false
 	}
-	time.Sleep(1 * time.Second)
-	snap2, err := tmux.CaptureVisible(ctx)
-	if err != nil {
-		return false
-	}
-	return snap1 != snap2
+	return state.Busy()
 }
 
-// waitAndClearThinking polls until Claude goes idle, then deletes any
-// remaining thinking indicator. If another send_user_message call runs first
-// and clears the ThinkingFile, this is a no-op.
-func waitAndClearThinking(client *slackapi.Client, channelID string) {
+// waitAndClearThinking polls until the active runtime goes idle, then deletes
+// any remaining thinking indicator. If another send_user_message call runs
+// first and clears the ThinkingFile, this is a no-op.
+func waitAndClearThinking(cfg app.Config, client *slackapi.Client, channelID string) {
+	runtime, err := runtimepkg.New(cfg)
+	if err != nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Poll for idle (pane stable + ❯ prompt)
-	tmux.WaitForIdle(ctx, 5*time.Minute)
+	_, _ = runtime.Session().WaitForAwaitingInput(ctx, 5*time.Minute)
 
 	// Atomically claim the thinking indicator; if empty, another process handled it
 	ts := slackpkg.ClaimThinkingTS()

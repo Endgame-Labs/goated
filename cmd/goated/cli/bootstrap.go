@@ -32,6 +32,10 @@ var bootstrapCmd = &cobra.Command{
 		// Prompt for common settings first
 		existing := loadExistingEnv(".env")
 		tz := prompt(reader, "Default timezone", withDefault(existing["GOAT_DEFAULT_TIMEZONE"], "America/Los_Angeles"))
+		runtime := prompt(reader, "Agent runtime (claude/codex)", withDefault(existing["GOAT_AGENT_RUNTIME"], "claude"))
+		if runtime != "claude" && runtime != "codex" {
+			return fmt.Errorf("agent runtime must be claude or codex")
+		}
 
 		// Interactive channel setup
 		fmt.Println()
@@ -44,11 +48,10 @@ var bootstrapCmd = &cobra.Command{
 		var envBuilder strings.Builder
 		envBuilder.WriteString("# goated configuration\n")
 		envBuilder.WriteString(fmt.Sprintf("GOAT_DEFAULT_TIMEZONE=%s\n", tz))
+		envBuilder.WriteString(fmt.Sprintf("GOAT_AGENT_RUNTIME=%s\n", runtime))
+		envBuilder.WriteString(fmt.Sprintf("GOAT_WORKSPACE_DIR=%s\n", withDefault(existing["GOAT_WORKSPACE_DIR"], "workspace")))
 		if v := existing["GOAT_DB_PATH"]; v != "" {
 			envBuilder.WriteString(fmt.Sprintf("GOAT_DB_PATH=%s\n", v))
-		}
-		if v := existing["GOAT_WORKSPACE_DIR"]; v != "" {
-			envBuilder.WriteString(fmt.Sprintf("GOAT_WORKSPACE_DIR=%s\n", v))
 		}
 		if v := existing["GOAT_LOG_DIR"]; v != "" {
 			envBuilder.WriteString(fmt.Sprintf("GOAT_LOG_DIR=%s\n", v))

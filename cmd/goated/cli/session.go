@@ -9,40 +9,41 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"goated/internal/agent"
 	"goated/internal/app"
-	"goated/internal/claude"
+	runtimepkg "goated/internal/runtime"
 )
 
-func makeBridge() *claude.TmuxBridge {
+func makeRuntime() (agent.Runtime, error) {
 	cfg := app.LoadConfig()
-	return &claude.TmuxBridge{
-		WorkspaceDir: cfg.WorkspaceDir,
-		LogDir:       cfg.LogDir,
-	}
+	return runtimepkg.New(cfg)
 }
 
 var sessionCmd = &cobra.Command{
 	Use:   "session",
-	Short: "Manage the Claude Code tmux session",
+	Short: "Manage the active agent runtime session",
 }
 
 var sessionRestartCmd = &cobra.Command{
 	Use:   "restart",
-	Short: "Kill and restart the Claude Code tmux session",
+	Short: "Kill and restart the active agent runtime session",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		bridge := makeBridge()
+		runtime, err := makeRuntime()
+		if err != nil {
+			return err
+		}
+		session := runtime.Session()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		fmt.Fprintln(os.Stderr, "Killing existing session...")
-		if err := bridge.StopSession(ctx); err != nil {
+		if err := session.StopSession(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 		}
-		// Let the process clean up
 		time.Sleep(2 * time.Second)
 
 		fmt.Fprintln(os.Stderr, "Starting fresh session...")
-		if err := bridge.EnsureSession(ctx); err != nil {
+		if err := session.EnsureSession(ctx); err != nil {
 			return fmt.Errorf("failed to start session: %w", err)
 		}
 		fmt.Fprintln(os.Stderr, "Session ready.")
@@ -52,29 +53,49 @@ var sessionRestartCmd = &cobra.Command{
 
 var sessionStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show Claude Code session health and busy state",
+	Short: "Show active runtime session health and busy state",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		bridge := makeBridge()
+		runtime, err := makeRuntime()
+		if err != nil {
+			return err
+		}
+		session := runtime.Session()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := bridge.SessionHealthy(ctx); err != nil {
-			fmt.Printf("Health: UNHEALTHY (%v)\n", err)
+		fmt.Printf("Runtime: %s\n", session.Descriptor().DisplayName)
+		health, err := session.GetHealth(ctx)
+		if err != nil {
+			fmt.Printf("Health: unknown (%v)\n", err)
+		} else if !health.OK {
+			recovery := "recoverable"
+			if !health.Recoverable {
+				recovery = "manual-intervention"
+			}
+			fmt.Printf("Health: UNHEALTHY (%s: %s)\n", recovery, health.Summary)
 		} else {
 			fmt.Println("Health: OK")
 		}
 
-		busy, err := bridge.IsSessionBusy(ctx)
+		state, err := session.GetSessionState(ctx)
 		if err != nil {
 			fmt.Printf("Busy: unknown (%v)\n", err)
-		} else if busy {
-			fmt.Println("Busy: yes (working)")
-		} else {
+		} else if state.SafeIdle() {
 			fmt.Println("Busy: no (idle at prompt)")
+		} else {
+			fmt.Printf("Busy: yes (%s)\n", state.Summary)
 		}
 
-		pct := bridge.ContextUsagePercent("")
-		fmt.Printf("Context: ~%d%% (rough estimate from scrollback)\n", pct)
+		if session.Descriptor().Capabilities.SupportsContextEstimate {
+			estimate, err := session.GetContextEstimate(ctx, "")
+			if err != nil || estimate.State != agent.ContextEstimateKnown {
+				fmt.Println("Context: unknown")
+			} else {
+				fmt.Printf("Context: ~%d%% (%s)\n", estimate.PercentUsed, estimate.RawSummary)
+			}
+		} else {
+			fmt.Println("Context: unsupported")
+		}
 
 		return nil
 	},
@@ -82,8 +103,8 @@ var sessionStatusCmd = &cobra.Command{
 
 var sessionSendCmd = &cobra.Command{
 	Use:   "send [text]",
-	Short: "Send text to the Claude Code tmux session",
-	Long: `Paste text into the Claude Code tmux session and press Enter.
+	Short: "Send text to the active runtime session",
+	Long: `Paste text into the active runtime session and press Enter.
 Text can be provided as arguments or piped via stdin.
 
 Examples:
@@ -91,7 +112,11 @@ Examples:
   ./goated session send "What are you working on?"
   echo "/context" | ./goated session send`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		bridge := makeBridge()
+		runtime, err := makeRuntime()
+		if err != nil {
+			return err
+		}
+		session := runtime.Session()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
@@ -113,11 +138,11 @@ Examples:
 			return fmt.Errorf("no text provided; pass as arguments or pipe via stdin")
 		}
 
-		if err := bridge.EnsureSession(ctx); err != nil {
+		if err := session.EnsureSession(ctx); err != nil {
 			return err
 		}
 
-		if err := bridge.SendRaw(ctx, text); err != nil {
+		if err := session.SendControlCommand(ctx, text); err != nil {
 			return fmt.Errorf("send failed: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "Sent to session (%d chars)\n", len(text))

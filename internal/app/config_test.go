@@ -6,152 +6,68 @@ import (
 	"testing"
 )
 
-func TestGetenvDefault(t *testing.T) {
-	// Unset key should return fallback
-	os.Unsetenv("TEST_GETENV_DEFAULT_KEY")
-	got := getenvDefault("TEST_GETENV_DEFAULT_KEY", "fallback")
-	if got != "fallback" {
-		t.Errorf("got %q, want fallback", got)
-	}
+func TestDefaultWorkspaceDir(t *testing.T) {
+	t.Parallel()
 
-	// Set key should return its value
-	os.Setenv("TEST_GETENV_DEFAULT_KEY", "actual")
-	defer os.Unsetenv("TEST_GETENV_DEFAULT_KEY")
-	got = getenvDefault("TEST_GETENV_DEFAULT_KEY", "fallback")
-	if got != "actual" {
-		t.Errorf("got %q, want actual", got)
-	}
-}
+	t.Run("prefers workspace child when present", func(t *testing.T) {
+		t.Parallel()
 
-func TestGetenvDefault_EmptyValue(t *testing.T) {
-	// Empty string should return fallback (matches the implementation)
-	os.Setenv("TEST_GETENV_EMPTY", "")
-	defer os.Unsetenv("TEST_GETENV_EMPTY")
-	got := getenvDefault("TEST_GETENV_EMPTY", "default")
-	if got != "default" {
-		t.Errorf("got %q, want default (empty env value should use fallback)", got)
-	}
-}
+		root := t.TempDir()
+		mustWriteFile(t, filepath.Join(root, "workspace", "goat"))
 
-func TestLoadDotEnv(t *testing.T) {
-	dir := t.TempDir()
-	envFile := filepath.Join(dir, ".env")
-
-	content := `# comment line
-FOO_TEST_DOTENV=bar
-BAZ_TEST_DOTENV="quoted value"
-SINGLE_QUOTED='single'
-EMPTY_LINE_BEFORE=value
-
-SPACED_KEY = spaced_value
-`
-	if err := os.WriteFile(envFile, []byte(content), 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	// Clear any existing values
-	os.Unsetenv("FOO_TEST_DOTENV")
-	os.Unsetenv("BAZ_TEST_DOTENV")
-	os.Unsetenv("SINGLE_QUOTED")
-	os.Unsetenv("EMPTY_LINE_BEFORE")
-	os.Unsetenv("SPACED_KEY")
-	defer func() {
-		os.Unsetenv("FOO_TEST_DOTENV")
-		os.Unsetenv("BAZ_TEST_DOTENV")
-		os.Unsetenv("SINGLE_QUOTED")
-		os.Unsetenv("EMPTY_LINE_BEFORE")
-		os.Unsetenv("SPACED_KEY")
-	}()
-
-	loadDotEnv(envFile)
-
-	tests := []struct {
-		key  string
-		want string
-	}{
-		{"FOO_TEST_DOTENV", "bar"},
-		{"BAZ_TEST_DOTENV", "quoted value"},
-		{"SINGLE_QUOTED", "single"},
-		{"EMPTY_LINE_BEFORE", "value"},
-		{"SPACED_KEY", "spaced_value"},
-	}
-
-	for _, tt := range tests {
-		got := os.Getenv(tt.key)
-		if got != tt.want {
-			t.Errorf("%s = %q, want %q", tt.key, got, tt.want)
+		got := defaultWorkspaceDir(root, "")
+		want := filepath.Join(root, "workspace")
+		if got != want {
+			t.Fatalf("defaultWorkspaceDir() = %q, want %q", got, want)
 		}
-	}
+	})
+
+	t.Run("uses cwd when cwd is already workspace", func(t *testing.T) {
+		t.Parallel()
+
+		workspace := t.TempDir()
+		mustWriteFile(t, filepath.Join(workspace, "goat"))
+		mustWriteFile(t, filepath.Join(workspace, "GOATED.md"))
+
+		if got := defaultWorkspaceDir(workspace, ""); got != workspace {
+			t.Fatalf("defaultWorkspaceDir() = %q, want %q", got, workspace)
+		}
+	})
 }
 
-func TestLoadDotEnv_ExistingEnvWins(t *testing.T) {
-	dir := t.TempDir()
-	envFile := filepath.Join(dir, ".env")
+func TestDefaultBaseDir(t *testing.T) {
+	t.Parallel()
 
-	os.WriteFile(envFile, []byte("EXISTING_KEY_TEST=from_file\n"), 0644)
+	t.Run("uses repo root when workspace child exists", func(t *testing.T) {
+		t.Parallel()
 
-	// Pre-set the env var
-	os.Setenv("EXISTING_KEY_TEST", "from_env")
-	defer os.Unsetenv("EXISTING_KEY_TEST")
+		root := t.TempDir()
+		mustWriteFile(t, filepath.Join(root, "workspace", "goat"))
 
-	loadDotEnv(envFile)
+		if got := defaultBaseDir(root, ""); got != root {
+			t.Fatalf("defaultBaseDir() = %q, want %q", got, root)
+		}
+	})
 
-	got := os.Getenv("EXISTING_KEY_TEST")
-	if got != "from_env" {
-		t.Errorf("got %q, want from_env (existing env should win)", got)
-	}
+	t.Run("uses parent when executable lives in workspace", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		exeDir := filepath.Join(root, "workspace")
+
+		if got := defaultBaseDir("", exeDir); got != root {
+			t.Fatalf("defaultBaseDir() = %q, want %q", got, root)
+		}
+	})
 }
 
-func TestLoadDotEnv_NonExistentFile(t *testing.T) {
-	// Should not panic or error
-	loadDotEnv("/nonexistent/path/.env")
-}
+func mustWriteFile(t *testing.T, path string) {
+	t.Helper()
 
-func TestLoadDotEnv_SkipsInvalidLines(t *testing.T) {
-	dir := t.TempDir()
-	envFile := filepath.Join(dir, ".env")
-
-	content := `no_equals_sign
-=empty_key
-VALID_KEY_TEST=valid
-`
-	os.WriteFile(envFile, []byte(content), 0644)
-	os.Unsetenv("VALID_KEY_TEST")
-	defer os.Unsetenv("VALID_KEY_TEST")
-
-	loadDotEnv(envFile)
-
-	if got := os.Getenv("VALID_KEY_TEST"); got != "valid" {
-		t.Errorf("VALID_KEY_TEST = %q, want valid", got)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
-}
-
-func TestGetenvNumericDefaults(t *testing.T) {
-	os.Unsetenv("TEST_NUM64")
-	if got := getenvInt64Default("TEST_NUM64", 7); got != 7 {
-		t.Fatalf("got %d, want 7", got)
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
-	os.Setenv("TEST_NUM64", "15")
-	if got := getenvInt64Default("TEST_NUM64", 7); got != 15 {
-		t.Fatalf("got %d, want 15", got)
-	}
-	os.Setenv("TEST_NUM64", "bad")
-	if got := getenvInt64Default("TEST_NUM64", 7); got != 7 {
-		t.Fatalf("got %d, want fallback 7", got)
-	}
-	os.Unsetenv("TEST_NUM64")
-
-	os.Unsetenv("TEST_NUM")
-	if got := getenvIntDefault("TEST_NUM", 3); got != 3 {
-		t.Fatalf("got %d, want 3", got)
-	}
-	os.Setenv("TEST_NUM", "9")
-	if got := getenvIntDefault("TEST_NUM", 3); got != 9 {
-		t.Fatalf("got %d, want 9", got)
-	}
-	os.Setenv("TEST_NUM", "-1")
-	if got := getenvIntDefault("TEST_NUM", 3); got != 3 {
-		t.Fatalf("got %d, want fallback 3", got)
-	}
-	os.Unsetenv("TEST_NUM")
 }

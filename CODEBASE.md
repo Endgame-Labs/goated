@@ -1,189 +1,111 @@
-# Codebase — Code Map
+# Codebase & Architecture
 
-For architecture overview, setup, and usage, see [README.md](README.md).
-For build/run instructions, see [CLAUDE.md](CLAUDE.md) (aka AGENTS.md).
-
-## Package reference
-
-### `cmd/daemon/main.go` — Daemon entry point
-
-Daemonizes via `nohup`, loads config, creates `TmuxBridge` + `Service`, initializes the
-active connector (Slack or Telegram), runs the cron ticker (1min interval), handles
-graceful shutdown with `Service.WaitInflight()`.
-
-### `cmd/goated/cli/` — Cobra CLI commands
-
-All commands are registered in `root.go::Execute()`. Both `./goated` and `./workspace/goat`
-are built from the same source — the binary name determines which commands are available.
-
-| File | Commands | Key functions |
-|------|----------|---------------|
-| `bootstrap.go` | `bootstrap` | Seeds `.env` from `.env.example`, creates DB, adds first channel, adds sync cron |
-| `channel.go` | `channel list/add/switch/delete` | `writeChannelEnv()` updates `.env` when switching |
-| `creds.go` | `creds set/get/list` | File-backed at `workspace/creds/<KEY>.txt` |
-| `cron.go` | `cron run/add/list/enable/disable/remove/set-schedule/set-timezone/set-silent` | `cron run` is called by the daemon's ticker |
-| `daemon.go` | `daemon restart/stop/status` | SIGTERM + wait, reads `logs/goated_daemon.pid` |
-| `gateway.go` | `gateway telegram/slack` | Standalone connector runners |
-| `send_user_message.go` | `send_user_message --chat` | Reads markdown from stdin, converts to platform format, posts. Manages Slack thinking indicator cleanup. Key functions: `sendViaSlack()`, `sendViaTelegram()`, `waitAndClearThinking()`, `postSlackThinking()` |
-| `session.go` | `session restart/status/send` | `session send` pastes text directly into tmux pane |
-| `spawn_subagent.go` | `spawn-subagent --prompt --chat` | Calls `subagent.RunBackground()` |
-| `start.go` | `start` | Foreground alternative to daemon |
-| `sync_self.go` | `sync_self_to_github` | Stages `.md` files in `self/`, checks for credential leaks, commits, pushes |
-| `helpers.go` | — | `prompt()`, `withDefault()` utilities |
-
-### `internal/app/config.go` — Configuration
-
-- **`Config`** struct — all settings (workspace, DB, logs, tokens, gateway, timezone, admin chat)
-- **`LoadConfig()`** — reads `.env` files (cwd, exe dir, exe parent dir), env vars override `.env`
-- **`loadDotEnv(path)`** — parses `KEY=VALUE` lines, skips comments, doesn't overwrite existing env
-
-### `internal/claude/tmux_bridge.go` — Claude Code session management
-
-- **`TmuxBridge`** struct — holds `WorkspaceDir`, `LogDir`
-- **`SendAndWait(ctx, channel, chatID, userPrompt, timeout)`** — wraps message in pydict envelope via `buildPromptEnvelope()`, pastes into tmux via `tmux.PasteAndEnter()`. NOTE: timeout param is currently ignored (`_`).
-- **`IsSessionBusy(ctx)`** — delegates to `tmux.IsIdle()` (two captures 2s apart)
-- **`waitForIdleOrStall(ctx, timeout)`** — polls pane every 3s, returns true if idle (stable + `❯`), false if stalled (30s unchanged without `❯`)
-- **`EnsureSession(ctx)`** — creates `goat_main` tmux session running `claude --dangerously-skip-permissions`, waits for ready
-- **`ClearSession(ctx, _)`** — kills session, calls `EnsureSession()`
-- **`ContextUsagePercent(_)`** — pastes `/context`, polls for output, parses with `contextPctRe`
-- **`SessionHealthy(ctx)`** — captures last 20 lines, matches against `healthErrorPatterns`
-- **`RestartSession(ctx)`** / **`StopSession(ctx)`** — kill + restart or just kill
-- **`SendRaw(ctx, text)`** — pastes text without envelope wrapping (used for `/compact`, `/clear`)
-- **`buildPromptEnvelope(channel, chatID, userPrompt)`** — builds pydict with keys: message, source, chat_id, respond_with, formatting, instruction
-
-### `internal/cron/runner.go` — Cron scheduler
-
-- **`Runner`** struct — store, workspace dir, log dir, notifier
-- **`Notifier`** interface — `SendMessage(ctx, chatID, text) error`
-- **`Run(ctx, now)`** — iterates active crons, checks schedule against `now` in job's timezone, skips if previous run still in-flight. Dispatches to `runSubagentJob()` or `runSystemJob()`.
-- Subagent jobs: call `subagent.RunSync()`, timeout 1 hour
-- System jobs: `exec.CommandContext()` with 1 hour timeout
-
-### `internal/db/db.go` — BoltDB persistence
-
-Opened per-operation (no held locks) so daemon and CLI don't contend.
-
-**Types:**
-- **`Store`** — wraps `bbolt.DB` path
-- **`CronJob`** — ID, Type (`subagent`/`system`), ChatID, Schedule, Prompt, PromptFile, Command, Timezone, Silent, Active
-- **`CronRun`** — ID, CronID, RunMinute, Status, LogPath
-- **`SubagentRun`** — ID, PID, Source, CronID, ChatID, Prompt, Status, LogPath, StartedAt, FinishedAt
-- **`Channel`** — Name, Type (`telegram`/`slack`), Config map, CreatedAt
-
-**Buckets:** `crons`, `cron_runs`, `subagent_runs`, `channels`, `meta`
-
-**Key methods:** `AddCron()`, `ActiveCrons()`, `AllCrons()`, `GetCron()`, `SetCronActive()`, `DeleteCron()`, `RecordCronRun()`, `RecordSubagentStart()`, `RecordSubagentFinish()`, `RunningSubagents()`, `CronJobRunning()`, `GetMeta()`, `SetMeta()`, `AddChannel()`, `GetChannel()`, `AllChannels()`, `DeleteChannel()`
-
-### `internal/gateway/` — Message routing
-
-**`types.go`** — interfaces:
-- **`IncomingMessage`** struct — Channel, ChatID, UserID, Text
-- **`Handler`** interface — `HandleMessage(ctx, msg, responder) error`
-- **`Responder`** interface — `SendMessage(ctx, chatID, text) error`
-- **`Connector`** interface — `Run(ctx, handler) error`
-
-**`service.go`** — central handler:
-- **`Service`** struct — Bridge, Store, DefaultTimezone, AdminChatID, DrainCtx, inflight WaitGroup, compaction state (mutex, queue)
-- **`HandleMessage(ctx, msg, responder)`** — routes `/clear`, `/chatid`, `/context`, `/schedule` commands. Otherwise: `ensureHealthySession()` (up to 5 retries), context check every 5 messages, `sendWithRetry()` (up to 2 retries on API errors)
-- **`sendWithRetry(ctx, msg, responder)`** — calls `Bridge.SendAndWait()`, then checks pane for errors via `tmux.CheckPaneForError()`
-- **`compactAndFlush(ctx, triggerMsg, responder)`** — sets `compacting=true`, waits for idle, sends `/compact`, waits for idle, flushes queued messages
-- **`ensureHealthySession(ctx, responder, chatID)`** — calls `Bridge.SessionHealthy()`, retries with 1min backoff, DMs admin on failure
-- **`WaitInflight()`** — blocks until all goroutines finish (used for graceful shutdown)
-
-### `internal/pydict/` — Python dict literal codec
-
-**`encode.go`:**
-- **`KV`** struct — Key string, Value any
-- **`Encode(map[string]any)`** — sorted keys, uses triple-quoted strings for multiline values
-- **`EncodeOrdered([]KV)`** — preserves key order
-
-**`parse.go`:**
-- **`Parse(input)`** — tokenizer + recursive descent parser, handles triple-quoted strings, single/double quotes, booleans, None, nested dicts/lists
-
-**`pydict_test.go`** — round-trip and edge case tests
-
-### `internal/slack/connector.go` — Slack Socket Mode
-
-- **`Connector`** struct — api client, socket client, store, channelID, thinkingTS (mutex-guarded), seenEvents map (dedup, currently unbounded)
-- **`NewConnector(botToken, appToken, channelID, store)`**
-- **`Run(ctx, handler)`** — spawns goroutine processing `socket.Events`, filters for MessageEvent, deduplicates, posts thinking indicator, calls `handler.HandleMessage()`
-- **`SendMessage(ctx, channelID, text)`** — converts markdown to Slack mrkdwn via `util.MarkdownToSlackMrkdwn()`, chunks at 4000 chars
-- **`postThinking(channel)`** — posts `_thinking..._`, writes timestamp to `/tmp/goated-slack-thinking`, spawns `reapThinkingIndicator()` goroutine
-- **`clearThinkingIfNeeded(channel)`** — reads thinkingTS, deletes file + Slack message
-- **`ReapThinkingIndicator(api, channel, ts)`** — exported TTL safety net: 4min soft deadline (deletes if idle), 20min hard deadline (deletes unconditionally)
-- **`ThinkingFile`** constant — `/tmp/goated-slack-thinking`
-
-### `internal/subagent/run.go` — Headless subagent execution
-
-- **`RunOpts`** struct — WorkspaceDir, Prompt, LogPath, Source, CronID, ChatID, Silent
-- **`BuildPrompt(preamble, userPrompt, chatID, source, logPath)`** — constructs prompt with send command and formatting instructions
-- **`RunSync(ctx, store, opts)`** — runs `claude -p` synchronously, captures output, records in DB
-- **`RunBackground(store, opts)`** — starts `claude -p` in background goroutine, returns PID
-
-### `internal/telegram/connector.go` — Telegram bot
-
-- **`Connector`** struct — bot client, store
-- **`RunMode`** type — `"polling"` or `"webhook"`
-- **`WebhookOptions`** struct — URL, ListenAddr, Path
-- **`NewConnector(token, store)`**
-- **`Run(ctx, handler, mode, webhookOpts)`** — dispatches to `runPolling()` or `runWebhook()`
-- **`runPolling(ctx, handler)`** — long-polls with `bot.GetUpdatesChan()`, persists offset in DB, spawns typing indicator loop per message
-- **`runWebhook(ctx, handler, opts)`** — sets webhook, listens on HTTP, same handler flow
-- **`SendMessage(ctx, chatID, text)`** — converts markdown to Telegram HTML via `util.MarkdownToTelegramHTML()`, falls back to plain text if HTML rejected
-
-### `internal/tmux/tmux.go` — Tmux primitives
-
-- **`SessionExists(ctx)`** — `tmux has-session -t goat_main`
-- **`PasteAndEnter(ctx, text)`** — writes text to temp file, `tmux load-buffer` + `paste-buffer`, polls until prompt line changes (5s timeout), sends Enter key
-- **`CapturePane(ctx)`** — full scrollback of `goat_main:0.0` (`-p -S -`)
-- **`CaptureVisible(ctx)`** — visible portion only (`-p`)
-- **`Run(ctx, args...)`** / **`RunOutput(ctx, args...)`** — execute arbitrary tmux commands
-- **`WaitForIdle(ctx, timeout)`** — captures every 2s, requires 2 consecutive unchanged captures + `HasPrompt()` to return nil
-- **`IsIdle(ctx)`** — quick version: two captures 2s apart, returns `snap1 == snap2 && HasPrompt(snap2)`
-- **`HasPrompt(paneOutput)`** — checks last 5 lines for `❯`
-- **`CheckPaneForError(ctx)`** — scans last 15 lines against `retryableErrors` list (API 5xx, overloaded, internal server error)
-
-### `internal/util/` — Format conversion
-
-**`slackformat.go`:**
-- **`MarkdownToSlackMrkdwn(md)`** — line-by-line conversion: headers→bold, fenced code blocks pass through, inline bold/italic/strike/code, blockquotes, lists. Strips markdown backslash escapes (`\!`, `\.`, `\-`, etc.)
-
-**`telegramhtml.go`:**
-- **`MarkdownToTelegramHTML(md)`** — converts to `<b>`, `<i>`, `<s>`, `<code>`, `<pre>`, `<blockquote>`. HTML-escapes content. Handles language-tagged code blocks.
-
-**`sanitize.go`:**
-- **`SafeName(in)`** — replaces non-alphanumeric chars with `_`
-
-**`text.go`:**
-- **`ExtractUserMessage(s)`** — parses `:START_USER_MESSAGE:...:END_USER_MESSAGE:` blocks from pane output, handles ANSI codes and TUI artifacts
-
-## Package dependency graph
+## Project structure
 
 ```
-cmd/daemon/main.go
-├── internal/app          (config)
-├── internal/db           (store)
-├── internal/claude       (TmuxBridge)
-├── internal/gateway      (Service)
-├── internal/cron         (Runner)
-├── internal/slack        (Connector)
-└── internal/telegram     (Connector)
-
-internal/gateway/service.go
-├── internal/claude       (Bridge interface — TmuxBridge)
-├── internal/db           (Store — cron, meta)
-└── internal/tmux         (CheckPaneForError)
-
-internal/claude/tmux_bridge.go
-├── internal/tmux         (PasteAndEnter, CaptureVisible, IsIdle, WaitForIdle, HasPrompt, etc.)
-└── internal/pydict       (EncodeOrdered — prompt envelope)
-
-cmd/goated/cli/send_user_message.go
-├── internal/slack        (ThinkingFile, ReapThinkingIndicator)
-├── internal/tmux         (WaitForIdle, IsIdle, CaptureVisible)
-└── internal/util         (MarkdownToSlackMrkdwn, MarkdownToTelegramHTML)
-
-internal/cron/runner.go
-└── internal/subagent     (RunSync)
-    └── internal/db       (RecordSubagentStart/Finish)
+.                        # Go module root
+├── cmd/
+│   ├── goated/          # Agent CLI (./workspace/goat)
+│   └── daemon/          # Gateway daemon (./goated_daemon)
+├── internal/
+│   ├── app/             # Config (env vars, .env loading)
+│   ├── agent/           # Provider-neutral runtime contracts
+│   ├── claude/          # Claude runtime implementations
+│   ├── codex/           # Codex runtime implementations
+│   ├── cron/            # Cron runner
+│   ├── db/              # BoltDB persistence (crons, subagent runs, meta)
+│   ├── gateway/         # Gateway service (message routing, auto-compact, retry)
+│   ├── slack/           # Slack connector (Socket Mode)
+│   ├── subagent/        # Headless subagent launcher
+│   ├── telegram/        # Telegram connector
+│   ├── tmux/            # Shared tmux helpers
+│   └── util/            # Markdown conversion, etc.
+├── workspace/           # Agent working directory (where the active runtime runs)
+│   ├── goat             # Agent CLI binary (built by build.sh)
+│   ├── GOATED.md        # Shared runtime instructions
+│   ├── CLAUDE.md        # Claude compatibility shim
+│   ├── TOOLS.md         # Guide for building CLI tools
+│   └── self/            # Private agent data (gitignored)
+├── build.sh             # Builds all three binaries
+├── build_all_and_run_daemon.sh  # Builds + starts daemon
+└── main.go              # Alias entrypoint (same as cmd/goated)
 ```
+
+## Binaries
+
+| Binary | Source | Output path | Purpose |
+|--------|--------|-------------|---------|
+| `goated` | `.` (main.go) | `./goated` | Control CLI (start, daemon, cron, bootstrap) |
+| `goated_daemon` | `./cmd/daemon` | `./goated_daemon` | Gateway daemon (Slack/Telegram <-> active runtime) |
+| `goat` | `./cmd/goated` | `./workspace/goat` | Agent CLI (used by the runtime inside workspace) |
+
+All three are statically-compiled Go. The daemon uses ~14 MB RSS. The `goat` CLI is exec'd per-call and exits immediately.
+
+## How it works
+
+```
+┌──────────┐         ┌──────────────┐     paste    ┌──────────────────────────┐
+│  Slack/  │ ──────> │   Gateway    │ ───────────> │  Active Runtime (tmux)   │
+│ Telegram │         │   Daemon     │              │  interactive session     │
+│   User   │ <────── │              │ <──────────  │                          │
+└──────────┘         └──────────────┘  exec        └──────────────────────────┘
+    ^                    │                           │            │
+    │                    │                           │            │ ./goat spawn-subagent
+    │                    │         ./goat send_user_ │            │
+    │                    │                 message   v            v
+    └────────────────────┼────────────────────────────      ┌────────────────────┐
+                         │                                  │  Subagent          │
+                    ┌────v─────┐                            │ (headless runtime) │
+                    │   Cron   │ ────────────────────────>  │                    │
+                    │  Runner  │  spawn                     └────────────────────┘
+                    └──────────┘
+```
+
+**Message flow:**
+
+1. User sends a message via Slack or Telegram
+2. Gateway connector receives it (Socket Mode / polling / webhook)
+3. Gateway posts a `_thinking..._` indicator (Slack) or typing animation (Telegram)
+4. Message is wrapped in a **pydict envelope** (Python dict literal with message, source, chat_id, respond_with, formatting)
+5. The selected session runtime pastes the envelope into the tmux pane via `tmux load-buffer` + `paste-buffer`
+6. Bridge polls for idle using **content-change detection**: pane must be stable (unchanged across consecutive 2s captures) AND contain `❯`
+7. The active runtime processes the request and pipes markdown into `./goat send_user_message --chat <id>`
+8. The `goat` CLI converts markdown to platform format (Slack mrkdwn / Telegram HTML) and posts it
+9. On Slack, the thinking indicator is deleted; if the runtime is still busy, a new one is posted and reaped on idle
+
+**Key design choice:** the runtime sends its own replies. The gateway doesn't scrape output from tmux — the runtime is instructed to pipe its response through the `goat` CLI.
+
+**Subagents and cron jobs** run as headless runtime processes (not in the tmux session). Claude uses `claude -p`; Codex uses `codex exec`. Each gets its own process, tracked in BoltDB with PID and status.
+
+## Gateway features
+
+- **Auto-compact:** checks context usage every 5 messages using the active runtime's context-estimate capability. If usage exceeds 80% and compaction is supported, sends `/compact` and queues incoming messages until done.
+- **Retry on API errors:** detects 5xx/overloaded errors in the pane and retries up to 2 times.
+- **Session health:** classifies recoverable vs non-recoverable runtime failures. Auto-restarts recoverable failures up to 5 times. DMs admin if recovery fails.
+- **Thinking indicator (Slack):** posts `_thinking..._` on message receipt, deletes it when the runtime responds. TTL reaper (4min soft / 20min hard) prevents orphaned indicators.
+- **Idle detection:** runtime-specific. Claude uses stable-pane plus prompt detection; Codex uses pane stability plus blocker classification.
+
+## Cron system
+
+- Cron jobs are stored in BoltDB with schedule, prompt, timezone, and flags.
+- The runner ticks every minute, checks due jobs, spawns subagents.
+- Jobs with `--silent` flag suppress both user messages and main session notifications on success (errors always notify).
+- A job won't fire again if its previous run is still in-flight.
+
+## Configuration
+
+All config via environment variables or `.env` in the repo root:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GOAT_GATEWAY` | `telegram` | `slack` or `telegram` |
+| `GOAT_AGENT_RUNTIME` | `claude` | `claude` or `codex` |
+| `GOAT_SLACK_BOT_TOKEN` | | Bot User OAuth Token (xoxb-...) |
+| `GOAT_SLACK_APP_TOKEN` | | App-Level Token (xapp-...) for Socket Mode |
+| `GOAT_SLACK_CHANNEL_ID` | | Monitored Slack DM channel |
+| `GOAT_TELEGRAM_BOT_TOKEN` | | Telegram bot API token |
+| `GOAT_DEFAULT_TIMEZONE` | `America/Los_Angeles` | Timezone for cron schedules |
+| `GOAT_ADMIN_CHAT_ID` | | Chat ID for admin alerts |
+| `GOAT_DB_PATH` | `./goated.db` | BoltDB path |
+| `GOAT_WORKSPACE_DIR` | `workspace` | Agent working directory |
+| `GOAT_LOG_DIR` | `./logs` | Log directory |

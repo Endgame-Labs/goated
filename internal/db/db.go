@@ -27,7 +27,7 @@ type Store struct {
 
 type CronJob struct {
 	ID         uint64 `json:"id"`
-	Type       string `json:"type"`              // "subagent" (default) or "system"
+	Type       string `json:"type"` // "subagent" (default) or "system"
 	ChatID     string `json:"chat_id"`
 	Schedule   string `json:"schedule"`
 	Prompt     string `json:"prompt,omitempty"`
@@ -40,12 +40,21 @@ type CronJob struct {
 }
 
 type CronRun struct {
-	ID         uint64 `json:"id"`
-	CronID     uint64 `json:"cron_id"`
-	RunMinute  string `json:"run_minute"`
-	Status     string `json:"status"`
-	UserMsg    string `json:"user_message,omitempty"`
-	JobLogPath string `json:"job_log_path,omitempty"`
+	ID              uint64 `json:"id"`
+	CronID          uint64 `json:"cron_id"`
+	RunMinute       string `json:"run_minute"`
+	Status          string `json:"status"`
+	UserMsg         string `json:"user_message,omitempty"`
+	JobLogPath      string `json:"job_log_path,omitempty"`
+	RuntimeProvider string `json:"runtime_provider,omitempty"`
+	RuntimeMode     string `json:"runtime_mode,omitempty"`
+	RuntimeVersion  string `json:"runtime_version,omitempty"`
+}
+
+type ExecutionRuntime struct {
+	Provider string
+	Mode     string
+	Version  string
 }
 
 func Open(path string) (*Store, error) {
@@ -166,7 +175,7 @@ func (s *Store) ActiveCrons() ([]CronJob, error) {
 	return jobs, err
 }
 
-func (s *Store) RecordCronRun(cronID uint64, runMinute, status, userMsg, jobLogPath string) error {
+func (s *Store) RecordCronRun(cronID uint64, runMinute, status, userMsg, jobLogPath string, runtime ExecutionRuntime) error {
 	return s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(cronRunsBucket)
 		// Dedup: check if this cron+minute already recorded
@@ -178,6 +187,9 @@ func (s *Store) RecordCronRun(cronID uint64, runMinute, status, userMsg, jobLogP
 				run.Status = status
 				run.UserMsg = userMsg
 				run.JobLogPath = jobLogPath
+				run.RuntimeProvider = runtime.Provider
+				run.RuntimeMode = runtime.Mode
+				run.RuntimeVersion = runtime.Version
 				data, err := json.Marshal(run)
 				if err != nil {
 					return err
@@ -187,12 +199,15 @@ func (s *Store) RecordCronRun(cronID uint64, runMinute, status, userMsg, jobLogP
 		}
 		seq, _ := b.NextSequence()
 		run := CronRun{
-			ID:         seq,
-			CronID:     cronID,
-			RunMinute:  runMinute,
-			Status:     status,
-			UserMsg:    userMsg,
-			JobLogPath: jobLogPath,
+			ID:              seq,
+			CronID:          cronID,
+			RunMinute:       runMinute,
+			Status:          status,
+			UserMsg:         userMsg,
+			JobLogPath:      jobLogPath,
+			RuntimeProvider: runtime.Provider,
+			RuntimeMode:     runtime.Mode,
+			RuntimeVersion:  runtime.Version,
 		}
 		data, err := json.Marshal(run)
 		if err != nil {
@@ -331,34 +346,40 @@ func (s *Store) DeleteCron(id uint64) error {
 
 // SubagentRun tracks a running or completed subagent process.
 type SubagentRun struct {
-	ID         uint64 `json:"id"`
-	PID        int    `json:"pid"`
-	Source     string `json:"source"` // "cron", "cli", "gateway"
-	CronID     uint64 `json:"cron_id,omitempty"`
-	ChatID     string `json:"chat_id,omitempty"`
-	Prompt     string `json:"prompt"`
-	Status     string `json:"status"` // "running", "ok", "error"
-	LogPath    string `json:"log_path"`
-	StartedAt  string `json:"started_at"`
-	FinishedAt string `json:"finished_at,omitempty"`
+	ID              uint64 `json:"id"`
+	PID             int    `json:"pid"`
+	Source          string `json:"source"` // "cron", "cli", "gateway"
+	CronID          uint64 `json:"cron_id,omitempty"`
+	ChatID          string `json:"chat_id,omitempty"`
+	Prompt          string `json:"prompt"`
+	Status          string `json:"status"` // "running", "ok", "error"
+	LogPath         string `json:"log_path"`
+	StartedAt       string `json:"started_at"`
+	FinishedAt      string `json:"finished_at,omitempty"`
+	RuntimeProvider string `json:"runtime_provider,omitempty"`
+	RuntimeMode     string `json:"runtime_mode,omitempty"`
+	RuntimeVersion  string `json:"runtime_version,omitempty"`
 }
 
-func (s *Store) RecordSubagentStart(pid int, source string, cronID uint64, chatID, prompt, logPath string) (uint64, error) {
+func (s *Store) RecordSubagentStart(pid int, source string, cronID uint64, chatID, prompt, logPath string, runtime ExecutionRuntime) (uint64, error) {
 	var id uint64
 	err := s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(subagentRunsBucket)
 		seq, _ := b.NextSequence()
 		id = seq
 		run := SubagentRun{
-			ID:        id,
-			PID:       pid,
-			Source:    source,
-			CronID:    cronID,
-			ChatID:    chatID,
-			Prompt:    prompt,
-			Status:    "running",
-			LogPath:   logPath,
-			StartedAt: time.Now().UTC().Format(time.RFC3339),
+			ID:              id,
+			PID:             pid,
+			Source:          source,
+			CronID:          cronID,
+			ChatID:          chatID,
+			Prompt:          prompt,
+			Status:          "running",
+			LogPath:         logPath,
+			StartedAt:       time.Now().UTC().Format(time.RFC3339),
+			RuntimeProvider: runtime.Provider,
+			RuntimeMode:     runtime.Mode,
+			RuntimeVersion:  runtime.Version,
 		}
 		data, err := json.Marshal(run)
 		if err != nil {

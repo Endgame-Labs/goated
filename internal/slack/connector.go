@@ -20,8 +20,9 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
+	"goated/internal/app"
 	"goated/internal/gateway"
-	"goated/internal/tmux"
+	runtimepkg "goated/internal/runtime"
 	"goated/internal/util"
 )
 
@@ -366,8 +367,8 @@ func (c *Connector) clearThinkingIfNeeded(channel string) bool {
 }
 
 // reapThinkingIndicator is a TTL safety net for thinking indicators.
-// Soft deadline: 4 minutes — deletes if Claude is idle.
-// If Claude is still busy, rechecks every minute.
+// Soft deadline: 4 minutes — deletes if the active runtime is idle.
+// If the runtime is still busy, rechecks every minute.
 // Hard deadline: 20 minutes — deletes unconditionally.
 func reapThinkingIndicator(api *slack.Client, channel, ts string) {
 	const softDeadline = 4 * time.Minute
@@ -381,15 +382,21 @@ func reapThinkingIndicator(api *slack.Client, channel, ts string) {
 		return
 	}
 
-	ctx := context.Background()
+	cfg := app.LoadConfig()
+	runtime, _ := runtimepkg.New(cfg)
 	hardCutoff := time.Now().Add(hardDeadline - softDeadline)
 
 	for {
 		if time.Now().After(hardCutoff) {
 			break // hard deadline reached, delete unconditionally
 		}
-		if tmux.IsIdle(ctx) {
-			break // Claude is idle, safe to delete
+		if runtime != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			state, err := runtime.Session().GetSessionState(ctx)
+			cancel()
+			if err == nil && state.SafeIdle() {
+				break // runtime is idle, safe to delete
+			}
 		}
 		time.Sleep(recheckInterval)
 		if !thinkingFileHasTS(ts) {

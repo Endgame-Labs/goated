@@ -227,6 +227,8 @@ func writeChannelEnv(cfg app.Config, ch *db.Channel) error {
 	var b strings.Builder
 	b.WriteString("# goated configuration\n")
 	b.WriteString(fmt.Sprintf("GOAT_GATEWAY=%s\n", ch.Type))
+	b.WriteString(fmt.Sprintf("GOAT_AGENT_RUNTIME=%s\n",
+		withDefault(existing["GOAT_AGENT_RUNTIME"], "claude")))
 
 	// Preserve common settings
 	b.WriteString(fmt.Sprintf("GOAT_DEFAULT_TIMEZONE=%s\n",
@@ -234,9 +236,8 @@ func writeChannelEnv(cfg app.Config, ch *db.Channel) error {
 	if v := existing["GOAT_DB_PATH"]; v != "" {
 		b.WriteString(fmt.Sprintf("GOAT_DB_PATH=%s\n", v))
 	}
-	if v := existing["GOAT_WORKSPACE_DIR"]; v != "" {
-		b.WriteString(fmt.Sprintf("GOAT_WORKSPACE_DIR=%s\n", v))
-	}
+	b.WriteString(fmt.Sprintf("GOAT_WORKSPACE_DIR=%s\n",
+		withDefault(existing["GOAT_WORKSPACE_DIR"], "workspace")))
 	if v := existing["GOAT_LOG_DIR"]; v != "" {
 		b.WriteString(fmt.Sprintf("GOAT_LOG_DIR=%s\n", v))
 	}

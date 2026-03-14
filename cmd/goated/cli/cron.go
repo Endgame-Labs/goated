@@ -11,6 +11,7 @@ import (
 	"goated/internal/app"
 	cronpkg "goated/internal/cron"
 	"goated/internal/db"
+	runtimepkg "goated/internal/runtime"
 )
 
 var cronCmd = &cobra.Command{
@@ -30,10 +31,16 @@ var cronRunCmd = &cobra.Command{
 		}
 		defer database.Close()
 
+		runtime, err := runtimepkg.New(cfg)
+		if err != nil {
+			return err
+		}
+
 		runner := &cronpkg.Runner{
 			Store:        database,
 			WorkspaceDir: cfg.WorkspaceDir,
 			LogDir:       cfg.LogDir,
+			Headless:     runtime.Headless(),
 		}
 
 		now := time.Now()

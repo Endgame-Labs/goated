@@ -5,6 +5,12 @@ For agent runtime instructions (responding to users, memory, identity), see [wor
 
 ## Building
 
+If this machine is missing Go or other prerequisites, run:
+
+```bash
+scripts/setup_machine.sh doctor
+```
+
 **Always use `build.sh`** — never `go build` directly.
 
 ```bash
@@ -45,3 +51,18 @@ go build ./...          # quick compile check
 ```
 
 No automated tests yet. Test manually by sending messages through the gateway.
+
+## Machine setup
+
+Goated expects:
+- Go matching `go.mod`
+- `tmux`
+- one runtime CLI on `PATH`: `claude` or `codex`
+
+Useful commands:
+
+```bash
+scripts/setup_machine.sh doctor
+scripts/setup_machine.sh install-system
+scripts/setup_machine.sh install-go
+```
