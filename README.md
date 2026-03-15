@@ -300,6 +300,21 @@ A cron watchdog ensures the daemon is always running. If the daemon dies for any
 
 Logs to `logs/watchdog.log`.
 
+### Logs
+
+```sh
+./goated logs                    # last 50 lines of daemon signal (filtered, no Slack socket noise)
+./goated logs -f                 # tail -f daemon signal (live)
+./goated logs -n 200             # last 200 lines of daemon signal
+./goated logs raw                # last 100 lines unfiltered
+./goated logs raw -f             # tail -f unfiltered (everything)
+./goated logs restarts           # recent restart history
+./goated logs cron               # recent cron run log
+./goated logs watchdog           # watchdog log
+```
+
+All subcommands support `-n` to control line count. `logs` and `logs raw` also support `-f` for live tailing. Output goes to stdout, so you can pipe to `grep`, `jq`, etc.
+
 ## Agent CLI
 
 The agent's tmux session runs inside `workspace/`, so all agent commands use `./goat` (not `workspace/goat`).
