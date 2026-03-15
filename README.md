@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/goated_logo_small.png" alt="Goated" width="180" />
+  <img src="assets/goated_logo.png" alt="Goated" />
 </p>
 
 # goated
@@ -20,11 +20,11 @@ A self-healing bridge between Slack/Telegram and an interactive agent runtime. G
 
 ### Footprint
 
-| Binary | Size | Description |
-|--------|------|-------------|
-| `goated` | 11 MB | Control-plane CLI + daemon (`daemon run`, `start`, cron, bootstrap) |
-| `goat` | 11 MB | Agent-facing CLI (send_user_message, creds, cron, spawn-subagent) |
-| `goated.db` | 64 KB | bbolt embedded database (crons, subagent runs, metadata) |
+| Binary      | Size  | Description                                                         |
+| ----------- | ----- | ------------------------------------------------------------------- |
+| `goated`    | 11 MB | Control-plane CLI + daemon (`daemon run`, `start`, cron, bootstrap) |
+| `goat`      | 11 MB | Agent-facing CLI (send_user_message, creds, cron, spawn-subagent)   |
+| `goated.db` | 64 KB | bbolt embedded database (crons, subagent runs, metadata)            |
 
 Both binaries are statically-compiled Go with no runtime dependencies.
 
@@ -40,7 +40,7 @@ For a detailed comparison of token usage, file sizes, and memory overhead vs. Op
 │   User   │         │  (polling/   │              │  interactive session     │
 │          │ <────── │   webhook)   │ <──────────  │                          │
 └──────────┘         └──────────────┘  exec        └──────────────────────────┘
-    ^                    │                           │            │          
+    ^                    │                           │            │
     │                    │                           │            │ ./goat spawn-subagent
     │                    │         ./goat send_user_ │            │
     │                    │                 message   v            v
@@ -48,8 +48,8 @@ For a detailed comparison of token usage, file sizes, and memory overhead vs. Op
                          │                                  │  Subagent          │
                     ┌────v─────┐                            │ (headless runtime) │
                     │   Cron   │ ────────────────────────>  │                    │
-                    │  Runner  │  spawn                     └────────────────────┘ 
-                    └──────────┘         
+                    │  Runner  │  spawn                     └────────────────────┘
+                    └──────────┘
 ```
 
 Both the **cron runner** and the **active runtime session** can spawn subagents. The cron runner does it on a schedule; the runtime does it via `./goat spawn-subagent` when it wants to delegate a task to a parallel worker. All subagents are tracked in bbolt.
@@ -136,12 +136,14 @@ goated/
 Everything committed in `workspace/` is **depersonalized and reusable** — it's the platform contract that any agent can pick up. Personal state lives in `workspace/self/`, which is gitignored from this repo.
 
 **Committed (platform):**
+
 - `GOATED.md` — shared runtime instructions and response contract
 - `CLAUDE.md` — Claude compatibility shim
 - `GOATED_CLI_README.md` — CLI reference
 - `CRON.md` — instructions for cron-spawned agents
 
 **Gitignored (personal, lives in `workspace/self/`):**
+
 - `IDENTITY.md` — name, personality, voice
 - `MEMORY.md` — long-term memory (loaded every session)
 - `USER.md` — info about the human they work with
@@ -152,11 +154,13 @@ Everything committed in `workspace/` is **depersonalized and reusable** — it's
 - Projects, notes, drafts, tools, and anything else the agent creates
 
 **We recommend making `workspace/self/` its own private Git repo.** This lets the agent:
+
 - Version its own identity, memory, and project files
 - Push/pull independently of the goated platform
 - Survive workspace resets without losing accumulated context
 
 To set this up:
+
 ```sh
 cd workspace/self
 git init
@@ -164,6 +168,7 @@ git remote add origin git@github.com:your-org/agent-self.git
 ```
 
 Then add to `workspace/self/AGENTS.md` or similar:
+
 ```
 Your self/ directory is a private git repo. Commit and push meaningful changes
 to your identity, memory, and project files regularly.
@@ -225,19 +230,19 @@ GOAT_ADMIN_CHAT_ID=your-chat-id
 
 All env vars:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GOAT_TELEGRAM_BOT_TOKEN` | (required) | Telegram bot API token |
-| `GOAT_AGENT_RUNTIME` | `claude` | `claude` or `codex` |
-| `GOAT_DEFAULT_TIMEZONE` | `America/Los_Angeles` | Timezone for cron schedules |
-| `GOAT_TELEGRAM_MODE` | `polling` | `polling` or `webhook` |
-| `GOAT_ADMIN_CHAT_ID` | (optional) | Chat ID for admin alerts when auto-recovery fails |
-| `GOAT_WORKSPACE_DIR` | `workspace` | Agent working directory |
-| `GOAT_DB_PATH` | `./goated.db` | Path to bbolt database |
-| `GOAT_LOG_DIR` | `./logs` | Log directory |
-| `GOAT_TELEGRAM_WEBHOOK_URL` | | Public URL for webhook mode |
-| `GOAT_TELEGRAM_WEBHOOK_LISTEN_ADDR` | `:8080` | Listen address for webhook mode |
-| `GOAT_TELEGRAM_WEBHOOK_PATH` | `/telegram/webhook` | Webhook endpoint path |
+| Variable                            | Default               | Description                                       |
+| ----------------------------------- | --------------------- | ------------------------------------------------- |
+| `GOAT_TELEGRAM_BOT_TOKEN`           | (required)            | Telegram bot API token                            |
+| `GOAT_AGENT_RUNTIME`                | `claude`              | `claude` or `codex`                               |
+| `GOAT_DEFAULT_TIMEZONE`             | `America/Los_Angeles` | Timezone for cron schedules                       |
+| `GOAT_TELEGRAM_MODE`                | `polling`             | `polling` or `webhook`                            |
+| `GOAT_ADMIN_CHAT_ID`                | (optional)            | Chat ID for admin alerts when auto-recovery fails |
+| `GOAT_WORKSPACE_DIR`                | `workspace`           | Agent working directory                           |
+| `GOAT_DB_PATH`                      | `./goated.db`         | Path to bbolt database                            |
+| `GOAT_LOG_DIR`                      | `./logs`              | Log directory                                     |
+| `GOAT_TELEGRAM_WEBHOOK_URL`         |                       | Public URL for webhook mode                       |
+| `GOAT_TELEGRAM_WEBHOOK_LISTEN_ADDR` | `:8080`               | Listen address for webhook mode                   |
+| `GOAT_TELEGRAM_WEBHOOK_PATH`        | `/telegram/webhook`   | Webhook endpoint path                             |
 
 ### Start
 
