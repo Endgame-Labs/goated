@@ -77,17 +77,25 @@ var runtimeStatusCmd = &cobra.Command{
 			fmt.Printf("Session state: %s (%s)\n", state.Kind, state.Summary)
 		}
 
+		// Show claude (headless) runtime status
+		claudeMarker := "inactive"
+		if runtime.Descriptor().Provider == agent.RuntimeClaude {
+			claudeMarker = "active"
+		}
+		fmt.Printf("\nRuntimes:\n")
+		fmt.Printf("  %-16s mode=%-12s (%s)\n", "Claude Code", "headless", claudeMarker)
+
 		fmt.Println("\nTmux sessions:")
 		for _, desc := range []agent.RuntimeDescriptor{
 			{
-				Provider:    agent.RuntimeClaude,
-				DisplayName: "Claude Code",
-				SessionName: "goat_claude_main",
+				Provider:    agent.RuntimeClaudeTUI,
+				DisplayName: "Claude Code TUI",
+				SessionName: "goat_claude_tui_main",
 			},
 			{
-				Provider:    agent.RuntimeCodex,
-				DisplayName: "Codex",
-				SessionName: "goat_codex_main",
+				Provider:    agent.RuntimeCodexTUI,
+				DisplayName: "Codex TUI",
+				SessionName: "goat_codex_tui_main",
 			},
 		} {
 			marker := "inactive"
@@ -95,20 +103,20 @@ var runtimeStatusCmd = &cobra.Command{
 				marker = "active"
 			}
 			running := tmux.SessionExistsFor(ctx, desc.SessionName)
-			fmt.Printf("  %-12s session=%-18s running=%t (%s)\n", desc.DisplayName, desc.SessionName, running, marker)
+			fmt.Printf("  %-16s session=%-18s running=%t (%s)\n", desc.DisplayName, desc.SessionName, running, marker)
 		}
 		return nil
 	},
 }
 
 var runtimeSwitchCmd = &cobra.Command{
-	Use:   "switch <claude|codex>",
+	Use:   "switch <claude|claude_tui|codex_tui>",
 	Short: "Switch the configured agent runtime",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		target := args[0]
-		if target != string(agent.RuntimeClaude) && target != string(agent.RuntimeCodex) {
-			return fmt.Errorf("runtime must be claude or codex")
+		if target != string(agent.RuntimeClaude) && target != string(agent.RuntimeClaudeTUI) && target != string(agent.RuntimeCodexTUI) {
+			return fmt.Errorf("runtime must be claude, claude_tui, or codex_tui")
 		}
 
 		existing := loadExistingEnv(".env")
@@ -132,9 +140,9 @@ var runtimeCleanupCmd = &cobra.Command{
 	Short: "Clean up inactive runtime sessions",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := app.LoadConfig()
-		inactive := sessionNameForRuntime(string(agent.RuntimeClaude))
-		if cfg.AgentRuntime == string(agent.RuntimeClaude) {
-			inactive = sessionNameForRuntime(string(agent.RuntimeCodex))
+		inactive := sessionNameForRuntime(string(agent.RuntimeClaudeTUI))
+		if cfg.AgentRuntime == string(agent.RuntimeClaudeTUI) {
+			inactive = sessionNameForRuntime(string(agent.RuntimeCodexTUI))
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -153,10 +161,14 @@ var runtimeCleanupCmd = &cobra.Command{
 }
 
 func sessionNameForRuntime(runtime string) string {
-	if runtime == string(agent.RuntimeCodex) {
-		return "goat_codex_main"
+	switch runtime {
+	case string(agent.RuntimeClaude):
+		return "goat_claude_main"
+	case string(agent.RuntimeCodexTUI):
+		return "goat_codex_tui_main"
+	default:
+		return "goat_claude_tui_main"
 	}
-	return "goat_claude_main"
 }
 
 func writeEnvMap(path string, values map[string]string) error {

@@ -32,9 +32,9 @@ var bootstrapCmd = &cobra.Command{
 		// Prompt for common settings first
 		existing := loadExistingEnv(".env")
 		tz := prompt(reader, "Default timezone", withDefault(existing["GOAT_DEFAULT_TIMEZONE"], "America/Los_Angeles"))
-		runtime := prompt(reader, "Agent runtime (claude/codex)", withDefault(existing["GOAT_AGENT_RUNTIME"], "claude"))
-		if runtime != "claude" && runtime != "codex" {
-			return fmt.Errorf("agent runtime must be claude or codex")
+		runtime := prompt(reader, "Agent runtime (claude/claude_tui/codex_tui)", withDefault(existing["GOAT_AGENT_RUNTIME"], "claude"))
+		if runtime != "claude" && runtime != "claude_tui" && runtime != "codex_tui" {
+			return fmt.Errorf("agent runtime must be claude, claude_tui, or codex_tui")
 		}
 
 		// Interactive channel setup

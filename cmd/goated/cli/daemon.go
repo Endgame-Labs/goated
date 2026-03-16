@@ -54,8 +54,22 @@ var daemonRunCmd = &cobra.Command{
 			return fmt.Errorf("daemon already running (pid=%d). Use: ./goated daemon restart --reason \"...\"", existingPID)
 		}
 
-		// If not the daemon child, re-exec backgrounded via shell nohup
+		// If not the daemon child, run pre-flight checks before backgrounding.
+		// This surfaces errors in the user's terminal instead of burying them
+		// in the log file where they'd be invisible.
 		if os.Getenv("_GOATED_DAEMON") != "1" {
+			if failures := runPreflightChecks(cfg); len(failures) > 0 {
+				fmt.Fprintf(os.Stderr, "Pre-flight check failed:\n")
+				for _, f := range failures {
+					fmt.Fprintf(os.Stderr, "  FAIL  %s: %s\n", f.Name, f.Detail)
+					if f.FixHint != "" {
+						fmt.Fprintf(os.Stderr, "        fix: %s\n", f.FixHint)
+					}
+				}
+				fmt.Fprintf(os.Stderr, "\nRun ./goated doctor for full diagnostics.\n")
+				return fmt.Errorf("pre-flight failed (%d issue(s))", len(failures))
+			}
+
 			exe, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("resolve executable: %w", err)
