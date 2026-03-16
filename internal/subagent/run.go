@@ -50,6 +50,7 @@ type RunOpts struct {
 	Silent       bool // suppress success notifications to main session
 	SessionName  string
 	Runtime      db.ExecutionRuntime
+	LogCaller    string // propagated as LOG_CALLER env var to child process
 }
 
 type Result struct {
@@ -145,12 +146,23 @@ func filterEnv(env []string, remove string) []string {
 	return out
 }
 
+// buildEnv filters CLAUDECODE vars and injects LOG_CALLER if set.
+func buildEnv(logCaller string) []string {
+	env := filterEnv(os.Environ(), "CLAUDECODE")
+	if logCaller != "" {
+		// Remove any existing LOG_CALLER first
+		env = filterEnv(env, "LOG_CALLER")
+		env = append(env, "LOG_CALLER="+logCaller)
+	}
+	return env
+}
+
 // RunSync runs a Claude-compatible subagent synchronously, blocking until it completes.
 // Tracks the run in the database if store is non-nil.
 func RunSync(ctx context.Context, store *db.Store, opts RunOpts) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "claude", "--dangerously-skip-permissions", "-p", opts.Prompt)
 	cmd.Dir = opts.WorkspaceDir
-	cmd.Env = filterEnv(os.Environ(), "CLAUDECODE")
+	cmd.Env = buildEnv(opts.LogCaller)
 	if opts.Runtime.Provider == "" {
 		opts.Runtime = db.ExecutionRuntime{
 			Provider: "claude",
@@ -169,7 +181,7 @@ func RunSync(ctx context.Context, store *db.Store, opts RunOpts) ([]byte, error)
 func RunBackground(store *db.Store, opts RunOpts) (pid int, err error) {
 	cmd := exec.Command("claude", "--dangerously-skip-permissions", "-p", opts.Prompt)
 	cmd.Dir = opts.WorkspaceDir
-	cmd.Env = filterEnv(os.Environ(), "CLAUDECODE")
+	cmd.Env = buildEnv(opts.LogCaller)
 	if opts.Runtime.Provider == "" {
 		opts.Runtime = db.ExecutionRuntime{
 			Provider: "claude",
@@ -185,6 +197,16 @@ func RunBackground(store *db.Store, opts RunOpts) (pid int, err error) {
 
 // RunSyncCommand runs a prepared process synchronously, blocking until it completes.
 func RunSyncCommand(ctx context.Context, store *db.Store, cmd *exec.Cmd, opts RunOpts) (Result, error) {
+	// Inject LOG_CALLER into the child process environment if set.
+	if opts.LogCaller != "" {
+		if cmd.Env == nil {
+			cmd.Env = buildEnv(opts.LogCaller)
+		} else {
+			cmd.Env = filterEnv(cmd.Env, "LOG_CALLER")
+			cmd.Env = append(cmd.Env, "LOG_CALLER="+opts.LogCaller)
+		}
+	}
+
 	outFile, err := os.Create(opts.LogPath)
 	if err != nil {
 		return Result{}, fmt.Errorf("create log %s: %w", opts.LogPath, err)
@@ -231,6 +253,16 @@ func RunSyncCommand(ctx context.Context, store *db.Store, cmd *exec.Cmd, opts Ru
 
 // RunBackgroundCommand starts a prepared process in the background and returns immediately.
 func RunBackgroundCommand(store *db.Store, cmd *exec.Cmd, opts RunOpts) (Result, error) {
+	// Inject LOG_CALLER into the child process environment if set.
+	if opts.LogCaller != "" {
+		if cmd.Env == nil {
+			cmd.Env = buildEnv(opts.LogCaller)
+		} else {
+			cmd.Env = filterEnv(cmd.Env, "LOG_CALLER")
+			cmd.Env = append(cmd.Env, "LOG_CALLER="+opts.LogCaller)
+		}
+	}
+
 	f, err := os.Create(opts.LogPath)
 	if err != nil {
 		return Result{}, fmt.Errorf("create log file: %w", err)

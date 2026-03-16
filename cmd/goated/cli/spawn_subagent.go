@@ -53,6 +53,7 @@ var spawnSubagentCmd = &cobra.Command{
 			Prompt:       fullPrompt,
 			Source:       "cli",
 			ChatID:       chatID,
+			LogCaller:    "cli",
 		})
 		if err != nil {
 			return err

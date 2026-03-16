@@ -94,7 +94,7 @@ func (b *TmuxBridge) EnsureSession(ctx context.Context) error {
 	session := b.sessionName()
 	created := false
 	if !tmux.SessionExistsFor(ctx, session) {
-		cmd := fmt.Sprintf("cd %q && unset CLAUDECODE && claude --dangerously-skip-permissions", b.WorkspaceDir)
+		cmd := fmt.Sprintf("cd %q && unset CLAUDECODE && export LOG_CALLER=main-session && claude --dangerously-skip-permissions", b.WorkspaceDir)
 		if err := tmux.Run(ctx, "new-session", "-d", "-s", session, cmd); err != nil {
 			return fmt.Errorf("start claude tmux session: %w", err)
 		}

@@ -43,6 +43,7 @@ func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agen
 		CronID:       req.CronID,
 		ChatID:       req.ChatID,
 		Silent:       req.Silent,
+		LogCaller:    req.LogCaller,
 		SessionName:  "goat_codex_tui_main",
 		Runtime: db.ExecutionRuntime{
 			Provider: "codex_tui",
@@ -80,6 +81,7 @@ func (h *HeadlessRuntime) RunBackground(store *db.Store, req agent.HeadlessReque
 		CronID:       req.CronID,
 		ChatID:       req.ChatID,
 		Silent:       req.Silent,
+		LogCaller:    req.LogCaller,
 		SessionName:  "goat_codex_tui_main",
 		Runtime: db.ExecutionRuntime{
 			Provider: "codex_tui",

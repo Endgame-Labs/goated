@@ -66,7 +66,7 @@ func (s *SessionRuntime) EnsureSession(ctx context.Context) error {
 	session := s.sessionName()
 	if !tmux.SessionExistsFor(ctx, session) {
 		cmd := fmt.Sprintf(
-			`cd %q && codex --no-alt-screen --sandbox danger-full-access --ask-for-approval never -c 'model_instructions_file="GOATED.md"'`,
+			`cd %q && export LOG_CALLER=main-session && codex --no-alt-screen --sandbox danger-full-access --ask-for-approval never -c 'model_instructions_file="GOATED.md"'`,
 			s.WorkspaceDir,
 		)
 		if err := tmux.Run(ctx, "new-session", "-d", "-s", session, cmd); err != nil {

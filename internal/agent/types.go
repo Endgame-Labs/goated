@@ -131,6 +131,7 @@ type HeadlessRequest struct {
 	CronID       uint64
 	ChatID       string
 	Silent       bool
+	LogCaller    string // e.g. "cron-7", "main-session", "cli"
 }
 
 type HeadlessResult struct {

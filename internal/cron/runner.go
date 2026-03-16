@@ -193,6 +193,7 @@ func (r *Runner) runSubagent(ctx context.Context, job db.CronJob, jobLog string)
 		CronID:       job.ID,
 		ChatID:       job.ChatID,
 		Silent:       job.Silent,
+		LogCaller:    fmt.Sprintf("cron-%d", job.ID),
 	})
 	if err != nil {
 		return "error", result
@@ -210,6 +211,7 @@ func (r *Runner) runSystem(ctx context.Context, job db.CronJob, jobLog string) s
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", job.Command)
 	cmd.Dir = r.WorkspaceDir
+	cmd.Env = append(os.Environ(), fmt.Sprintf("LOG_CALLER=cron-%d", job.ID))
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
