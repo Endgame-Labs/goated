@@ -19,6 +19,8 @@ type IncomingMessage struct {
 	ChatID               string
 	UserID               string
 	Text                 string
+	MessageID            string // platform message ID (e.g. Slack ts)
+	ThreadID             string // platform thread ID (e.g. Slack thread_ts)
 	Attachments          []string
 	AttachmentResults    []AttachmentResult
 	AttachmentsFailed    []AttachmentResult

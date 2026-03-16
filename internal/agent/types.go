@@ -112,7 +112,7 @@ type SessionRuntime interface {
 	StopSession(ctx context.Context) error
 	RestartSession(ctx context.Context) error
 	ResetConversation(ctx context.Context, chatID string) (ResetResult, error)
-	SendUserPrompt(ctx context.Context, channel, chatID, userPrompt string, attachments *MessageAttachments) error
+	SendUserPrompt(ctx context.Context, channel, chatID, userPrompt string, attachments *MessageAttachments, messageID, threadID string) error
 	SendControlCommand(ctx context.Context, text string) error
 	GetContextEstimate(ctx context.Context, chatID string) (ContextEstimate, error)
 	GetSessionState(ctx context.Context) (SessionState, error)

@@ -122,7 +122,7 @@ const postSendTimeout = 5 * time.Minute
 // If a retryable error is detected, it re-sends up to maxSendRetries times.
 func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, responder Responder) error {
 	for attempt := 0; attempt <= maxSendRetries; attempt++ {
-		if err := s.Session.SendUserPrompt(ctx, msg.Channel, msg.ChatID, msg.Text, msgAttachments(msg)); err != nil {
+		if err := s.Session.SendUserPrompt(ctx, msg.Channel, msg.ChatID, msg.Text, msgAttachments(msg), msg.MessageID, msg.ThreadID); err != nil {
 			return responder.SendMessage(ctx, msg.ChatID, s.friendlyError(err))
 		}
 
@@ -218,7 +218,7 @@ func (s *Service) compactAndFlush(ctx context.Context, triggerMsg IncomingMessag
 
 	// Flush all queued messages to tmux
 	for _, qm := range queue {
-		if err := s.Session.SendUserPrompt(ctx, qm.msg.Channel, qm.msg.ChatID, qm.msg.Text, msgAttachments(qm.msg)); err != nil {
+		if err := s.Session.SendUserPrompt(ctx, qm.msg.Channel, qm.msg.ChatID, qm.msg.Text, msgAttachments(qm.msg), qm.msg.MessageID, qm.msg.ThreadID); err != nil {
 			_ = qm.responder.SendMessage(ctx, qm.msg.ChatID, s.friendlyError(err))
 		}
 	}

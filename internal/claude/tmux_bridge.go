@@ -44,15 +44,15 @@ func (b *TmuxBridge) Descriptor() agent.RuntimeDescriptor {
 }
 
 func (b *TmuxBridge) SendAndWait(ctx context.Context, channel, chatID string, userPrompt string, _ time.Duration) error {
-	return b.SendUserPrompt(ctx, channel, chatID, userPrompt, nil)
+	return b.SendUserPrompt(ctx, channel, chatID, userPrompt, nil, "", "")
 }
 
-func (b *TmuxBridge) SendUserPrompt(ctx context.Context, channel, chatID string, userPrompt string, attachments *agent.MessageAttachments) error {
+func (b *TmuxBridge) SendUserPrompt(ctx context.Context, channel, chatID string, userPrompt string, attachments *agent.MessageAttachments, messageID, threadID string) error {
 	if err := b.EnsureSession(ctx); err != nil {
 		return err
 	}
 
-	wrapped := agent.BuildPromptEnvelope(channel, chatID, userPrompt, attachments)
+	wrapped := agent.BuildPromptEnvelope(channel, chatID, userPrompt, attachments, messageID, threadID)
 	return tmux.PasteAndEnterFor(ctx, b.sessionName(), wrapped)
 }
 

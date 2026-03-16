@@ -21,7 +21,7 @@ func (s stubRuntime) RestartSession(context.Context) error               { retur
 func (s stubRuntime) ResetConversation(context.Context, string) (agent.ResetResult, error) {
 	return agent.ResetResult{}, nil
 }
-func (s stubRuntime) SendUserPrompt(context.Context, string, string, string, *agent.MessageAttachments) error {
+func (s stubRuntime) SendUserPrompt(context.Context, string, string, string, *agent.MessageAttachments, string, string) error {
 	return nil
 }
 func (s stubRuntime) SendControlCommand(context.Context, string) error { return nil }

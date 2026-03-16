@@ -10,7 +10,7 @@ import (
 // BuildPromptEnvelope constructs the pydict-encoded prompt envelope that gets
 // pasted into a tmux agent session. This is runtime-agnostic — both Claude and
 // Codex sessions receive the same envelope format.
-func BuildPromptEnvelope(channel, chatID, userPrompt string, attachments *MessageAttachments) string {
+func BuildPromptEnvelope(channel, chatID, userPrompt string, attachments *MessageAttachments, messageID, threadID string) string {
 	var formattingDoc string
 	switch channel {
 	case "slack":
@@ -23,6 +23,13 @@ func BuildPromptEnvelope(channel, chatID, userPrompt string, attachments *Messag
 		{"message", strings.TrimSpace(userPrompt)},
 		{"source", channel},
 		{"chat_id", chatID},
+	}
+
+	if messageID != "" {
+		kvs = append(kvs, pydict.KV{"message_id", messageID})
+	}
+	if threadID != "" {
+		kvs = append(kvs, pydict.KV{"thread_id", threadID})
 	}
 
 	if attachments != nil {

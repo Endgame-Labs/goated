@@ -286,6 +286,8 @@ func (c *Connector) handleEventsAPI(ctx context.Context, handler gateway.Handler
 			ChatID:               ev.Channel,
 			UserID:               ev.User,
 			Text:                 text,
+			MessageID:            ev.TimeStamp,
+			ThreadID:             ev.ThreadTimeStamp,
 			Attachments:          attachments,
 			AttachmentResults:    attachmentResults,
 			AttachmentsFailed:    failed,
