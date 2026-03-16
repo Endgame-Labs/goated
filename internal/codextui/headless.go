@@ -1,4 +1,4 @@
-package codex
+package codextui
 
 import (
 	"context"
@@ -43,9 +43,9 @@ func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agen
 		CronID:       req.CronID,
 		ChatID:       req.ChatID,
 		Silent:       req.Silent,
-		SessionName:  "goat_codex_main",
+		SessionName:  "goat_codex_tui_main",
 		Runtime: db.ExecutionRuntime{
-			Provider: "codex",
+			Provider: "codex_tui",
 			Mode:     "headless_exec",
 			Version:  version,
 		},
@@ -80,9 +80,9 @@ func (h *HeadlessRuntime) RunBackground(store *db.Store, req agent.HeadlessReque
 		CronID:       req.CronID,
 		ChatID:       req.ChatID,
 		Silent:       req.Silent,
-		SessionName:  "goat_codex_main",
+		SessionName:  "goat_codex_tui_main",
 		Runtime: db.ExecutionRuntime{
-			Provider: "codex",
+			Provider: "codex_tui",
 			Mode:     "headless_exec",
 			Version:  version,
 		},

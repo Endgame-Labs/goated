@@ -11,27 +11,28 @@ import (
 )
 
 func Validate(ctx context.Context, rt agent.Runtime, workspaceDir string) error {
-	if !rt.Descriptor().Capabilities.SupportsInteractiveSession {
-		return nil
-	}
-	if _, err := exec.LookPath("tmux"); err != nil {
-		return fmt.Errorf("tmux is required: %w", err)
-	}
-	if workspaceDir == "" {
-		return fmt.Errorf("workspace directory is not configured")
-	}
-	if err := validateWorkspace(workspaceDir); err != nil {
-		return err
-	}
-
+	// Binary check applies to all runtimes
 	switch rt.Descriptor().Provider {
-	case agent.RuntimeClaude:
+	case agent.RuntimeClaude, agent.RuntimeClaudeTUI:
 		if _, err := exec.LookPath("claude"); err != nil {
 			return fmt.Errorf("claude binary not found on PATH: %w", err)
 		}
-	case agent.RuntimeCodex:
+	case agent.RuntimeCodexTUI:
 		if _, err := exec.LookPath("codex"); err != nil {
 			return fmt.Errorf("codex binary not found on PATH: %w", err)
+		}
+	}
+
+	// Tmux and workspace validation only for interactive (TUI) runtimes
+	if rt.Descriptor().Capabilities.SupportsInteractiveSession {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			return fmt.Errorf("tmux is required: %w", err)
+		}
+		if workspaceDir == "" {
+			return fmt.Errorf("workspace directory is not configured")
+		}
+		if err := validateWorkspace(workspaceDir); err != nil {
+			return err
 		}
 	}
 

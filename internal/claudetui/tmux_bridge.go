@@ -1,4 +1,4 @@
-package claude
+package claudetui
 
 import (
 	"context"
@@ -25,14 +25,14 @@ func NewSessionRuntime(workspaceDir, logDir string) *TmuxBridge {
 	return &TmuxBridge{
 		WorkspaceDir: workspaceDir,
 		LogDir:       logDir,
-		SessionName:  "goat_claude_main",
+		SessionName:  "goat_claude_tui_main",
 	}
 }
 
 func (b *TmuxBridge) Descriptor() agent.RuntimeDescriptor {
 	return agent.RuntimeDescriptor{
-		Provider:    agent.RuntimeClaude,
-		DisplayName: "Claude Code",
+		Provider:    agent.RuntimeClaudeTUI,
+		DisplayName: "Claude Code TUI",
 		SessionName: b.sessionName(),
 		Capabilities: agent.Capabilities{
 			SupportsInteractiveSession: true,
@@ -343,7 +343,7 @@ func (b *TmuxBridge) sessionName() string {
 	if b.SessionName != "" {
 		return b.SessionName
 	}
-	return "goat_claude_main"
+	return "goat_claude_tui_main"
 }
 
 // SendRaw pastes arbitrary text into the tmux session and presses Enter.
@@ -373,7 +373,7 @@ func (b *TmuxBridge) Version(ctx context.Context) string {
 }
 
 func waitForClaudeReady(ctx context.Context, timeout time.Duration) error {
-	return waitForClaudeReadyFor(ctx, "goat_claude_main", timeout)
+	return waitForClaudeReadyFor(ctx, "goat_claude_tui_main", timeout)
 }
 
 func waitForClaudeReadyFor(ctx context.Context, session string, timeout time.Duration) error {

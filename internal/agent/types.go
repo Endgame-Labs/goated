@@ -10,8 +10,9 @@ import (
 type RuntimeProvider string
 
 const (
-	RuntimeClaude RuntimeProvider = "claude"
-	RuntimeCodex  RuntimeProvider = "codex"
+	RuntimeClaude    RuntimeProvider = "claude"
+	RuntimeClaudeTUI RuntimeProvider = "claude_tui"
+	RuntimeCodexTUI  RuntimeProvider = "codex_tui"
 )
 
 type Capabilities struct {

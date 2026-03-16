@@ -1,4 +1,4 @@
-package codex
+package codextui
 
 import (
 	"context"
@@ -34,14 +34,14 @@ func NewSessionRuntime(workspaceDir, logDir string) *SessionRuntime {
 	return &SessionRuntime{
 		WorkspaceDir: workspaceDir,
 		LogDir:       logDir,
-		SessionName:  "goat_codex_main",
+		SessionName:  "goat_codex_tui_main",
 	}
 }
 
 func (s *SessionRuntime) Descriptor() agent.RuntimeDescriptor {
 	return agent.RuntimeDescriptor{
-		Provider:    agent.RuntimeCodex,
-		DisplayName: "Codex",
+		Provider:    agent.RuntimeCodexTUI,
+		DisplayName: "Codex TUI",
 		SessionName: s.sessionName(),
 		Capabilities: agent.Capabilities{
 			SupportsInteractiveSession: true,
@@ -388,7 +388,7 @@ func (s *SessionRuntime) sessionName() string {
 	if s.SessionName != "" {
 		return s.SessionName
 	}
-	return "goat_codex_main"
+	return "goat_codex_tui_main"
 }
 
 func parseStatusEstimate(output string) (int, string) {
