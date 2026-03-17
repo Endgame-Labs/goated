@@ -53,26 +53,16 @@ type hookSpec struct {
 	Command string `json:"command"`
 }
 
-// logCommand builds a shell command that appends a timestamped JSONL entry
-// to a daily log file. The hook event JSON is read from stdin, wrapped with
-// the event name and timestamp, and appended to hooks/YYYY-MM-DD.jsonl.
+// logCommand builds a shell command that pipes hook JSON from stdin into
+// `./goat log-hook`, which handles sleeping (to let creds settle), redaction,
+// timestamping, and appending to the daily JSONL file.
 //
-// The command also tees the Stop event to last_stop.json for quick access.
-func logCommand(hookDir, eventName string) string {
-	hooksLogDir := filepath.Join(hookDir, "hooks")
-	// Use shell to: read stdin into $body, build JSON line, append to daily file
-	cmd := fmt.Sprintf(
-		`sh -c 'body=$(cat); logdir="%s"; mkdir -p "$logdir"; `+
-			`printf "{\"event\":\"%s\",\"ts\":\"%%s\",\"body\":%%s}\n" "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)" "$body" `+
-			`>> "$logdir/$(date -u +%%Y-%%m-%%d).jsonl"`,
-		hooksLogDir, eventName,
+// Since cmd.Dir is workspace/, we use ./goat directly.
+func logCommand(hookDir, credsDir, eventName string) string {
+	return fmt.Sprintf(
+		`sh -c 'cat | ./goat log-hook --event %s --hook-dir %s --creds-dir %s'`,
+		eventName, hookDir, credsDir,
 	)
-	// For Stop events, also write to last_stop.json for quick access
-	if eventName == "Stop" {
-		cmd += fmt.Sprintf(`; printf "%%s" "$body" > "%s/last_stop.json"`, hookDir)
-	}
-	cmd += `'`
-	return cmd
 }
 
 // hooksSettingsPath returns the path where hook config will be written.
@@ -84,10 +74,10 @@ func hooksSettingsPath(workspaceDir string) string {
 // writeHooksConfig writes the Claude Code hooks configuration to
 // workspace/.claude/settings.local.json. Loaded via --settings flag since
 // Claude Code discovers settings relative to the git root, not cwd.
-// Every hook event is logged to a daily JSONL file at
-// $LOG_DIR/claude_session/hooks/YYYY-MM-DD.jsonl.
+// Every hook event is logged via `./goat log-hook` which handles redaction,
+// timestamping, and appending to $LOG_DIR/claude_session/hooks/YYYY-MM-DD.jsonl.
 // The Stop event is also written to last_stop.json for quick state access.
-func writeHooksConfig(workspaceDir, hookDir string) error {
+func writeHooksConfig(workspaceDir, hookDir, credsDir string) error {
 	claudeDir := filepath.Join(workspaceDir, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir .claude: %w", err)
@@ -101,7 +91,7 @@ func writeHooksConfig(workspaceDir, hookDir string) error {
 				Hooks: []hookSpec{
 					{
 						Type:    "command",
-						Command: logCommand(hookDir, event),
+						Command: logCommand(hookDir, credsDir, event),
 					},
 				},
 			},

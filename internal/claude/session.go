@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"goated/internal/agent"
+	"goated/internal/msglog"
 )
 
 // SessionRuntime implements agent.SessionRuntime using `claude -p --resume`.
@@ -19,6 +20,7 @@ import (
 type SessionRuntime struct {
 	workspaceDir string
 	logDir       string
+	redactor     *msglog.Redactor
 
 	mu        sync.Mutex
 	proc      *exec.Cmd  // current running process, nil if idle
@@ -28,9 +30,11 @@ type SessionRuntime struct {
 }
 
 func NewSessionRuntime(workspaceDir, logDir string) *SessionRuntime {
+	credsDir := filepath.Join(workspaceDir, "creds")
 	return &SessionRuntime{
 		workspaceDir: workspaceDir,
 		logDir:       logDir,
+		redactor:     msglog.NewRedactor(credsDir),
 	}
 }
 
@@ -61,6 +65,11 @@ func (r *SessionRuntime) hookDir() string {
 // runsDir returns the directory for per-run output logs.
 func (r *SessionRuntime) runsDir() string {
 	return filepath.Join(r.sessionDir(), "runs")
+}
+
+// credsDir returns the path to the creds directory under workspace.
+func (r *SessionRuntime) credsDir() string {
+	return filepath.Join(r.workspaceDir, "creds")
 }
 
 // hooksSettingsFile returns the absolute path to the hooks settings file.
@@ -103,7 +112,8 @@ func (r *SessionRuntime) EnsureSession(ctx context.Context) error {
 
 	// Write hooks config (resolve workspace to absolute for reliable paths)
 	absWorkspace, _ := filepath.Abs(r.workspaceDir)
-	if err := writeHooksConfig(absWorkspace, r.hookDir()); err != nil {
+	absCredsDir, _ := filepath.Abs(r.credsDir())
+	if err := writeHooksConfig(absWorkspace, r.hookDir(), absCredsDir); err != nil {
 		return fmt.Errorf("write hooks config: %w", err)
 	}
 
@@ -188,6 +198,9 @@ func (r *SessionRuntime) SendUserPrompt(ctx context.Context, channel, chatID, us
 		filterEnv(os.Environ(), "CLAUDECODE"),
 		fmt.Sprintf("GOATED_HOOK_DIR=%s", r.hookDir()),
 	)
+	if reqID := msglog.RequestIDFromContext(ctx); reqID != "" {
+		cmd.Env = append(cmd.Env, "GOAT_REQUEST_ID="+reqID)
+	}
 
 	// Log output to a per-run file
 	runFile := filepath.Join(r.runsDir(), fmt.Sprintf("%d.json", time.Now().UnixNano()))
@@ -196,13 +209,14 @@ func (r *SessionRuntime) SendUserPrompt(ctx context.Context, channel, chatID, us
 		return fmt.Errorf("create run log: %w", err)
 	}
 
-	// Capture stdout separately so we can parse session_id from JSON output
+	// Capture stdout separately so we can parse session_id from JSON output.
+	// Buffer stays raw; file gets redacted (run output is all content).
 	var stdoutBuf strings.Builder
-	cmd.Stdout = &teeWriter{file: outFile, buf: &stdoutBuf}
+	cmd.Stdout = &teeWriter{file: outFile, buf: &stdoutBuf, redactor: r.redactor}
 
-	// Capture stderr separately for error detection
+	// Capture stderr separately for error detection.
 	var stderrBuf strings.Builder
-	cmd.Stderr = &stderrWriter{file: outFile, buf: &stderrBuf}
+	cmd.Stderr = &stderrWriter{file: outFile, buf: &stderrBuf, redactor: r.redactor}
 
 	r.mu.Lock()
 	if r.proc != nil {
@@ -485,23 +499,51 @@ func parseSessionID(jsonOutput string) string {
 }
 
 // teeWriter writes to both a file and a string builder.
+// The buffer gets raw data (for session ID parsing), while the file gets
+// redacted output (run logs are all content).
 type teeWriter struct {
-	file *os.File
-	buf  *strings.Builder
+	file     *os.File
+	buf      *strings.Builder
+	redactor *msglog.Redactor
 }
 
 func (w *teeWriter) Write(p []byte) (int, error) {
 	w.buf.Write(p)
-	return w.file.Write(p)
+	if w.redactor != nil {
+		redacted := w.redactor.Redact(string(p))
+		_, err := w.file.WriteString(redacted)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		if _, err := w.file.Write(p); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
 }
 
 // stderrWriter tees stderr to both a file and a string builder.
+// The buffer gets raw data (for error detection), while the file gets
+// redacted output.
 type stderrWriter struct {
-	file *os.File
-	buf  *strings.Builder
+	file     *os.File
+	buf      *strings.Builder
+	redactor *msglog.Redactor
 }
 
 func (w *stderrWriter) Write(p []byte) (int, error) {
 	w.buf.Write(p)
-	return w.file.Write(p)
+	if w.redactor != nil {
+		redacted := w.redactor.Redact(string(p))
+		_, err := w.file.WriteString(redacted)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		if _, err := w.file.Write(p); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
 }
