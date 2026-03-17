@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"strings"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -21,18 +21,13 @@ var bootstrapCmd = &cobra.Command{
 		fmt.Println("=== goated bootstrap ===")
 		fmt.Println()
 
-		// Seed .env from .env.example if it doesn't exist yet
-		if _, err := os.Stat(".env"); os.IsNotExist(err) {
-			if example, err := os.ReadFile(".env.example"); err == nil {
-				_ = os.WriteFile(".env", example, 0o600)
-				fmt.Println("Created .env from .env.example")
-			}
-		}
+		// Load existing config if present
+		configPath := "goated.json"
+		existing, _ := app.ReadConfigJSON(configPath)
 
-		// Prompt for common settings first
-		existing := loadExistingEnv(".env")
-		tz := prompt(reader, "Default timezone", withDefault(existing["GOAT_DEFAULT_TIMEZONE"], "America/Los_Angeles"))
-		runtime := prompt(reader, "Agent runtime (claude/claude_tui/codex_tui)", withDefault(existing["GOAT_AGENT_RUNTIME"], "claude"))
+		// Prompt for common settings
+		tz := prompt(reader, "Default timezone", withDefault(strFromMap(existing, "default_timezone"), "America/Los_Angeles"))
+		runtime := prompt(reader, "Agent runtime (claude/claude_tui/codex_tui)", withDefault(strFromMap(existing, "agent_runtime"), "claude"))
 		if runtime != "claude" && runtime != "claude_tui" && runtime != "codex_tui" {
 			return fmt.Errorf("agent runtime must be claude, claude_tui, or codex_tui")
 		}
@@ -44,20 +39,30 @@ var bootstrapCmd = &cobra.Command{
 			return err
 		}
 
-		// Write initial .env with common settings so LoadConfig works
-		var envBuilder strings.Builder
-		envBuilder.WriteString("# goated configuration\n")
-		envBuilder.WriteString(fmt.Sprintf("GOAT_DEFAULT_TIMEZONE=%s\n", tz))
-		envBuilder.WriteString(fmt.Sprintf("GOAT_AGENT_RUNTIME=%s\n", runtime))
-		envBuilder.WriteString(fmt.Sprintf("GOAT_WORKSPACE_DIR=%s\n", withDefault(existing["GOAT_WORKSPACE_DIR"], "workspace")))
-		if v := existing["GOAT_DB_PATH"]; v != "" {
-			envBuilder.WriteString(fmt.Sprintf("GOAT_DB_PATH=%s\n", v))
+		// Build config map
+		configMap := make(map[string]any)
+		configMap["gateway"] = ch.Type
+		configMap["agent_runtime"] = runtime
+		configMap["default_timezone"] = tz
+		configMap["workspace_dir"] = withDefault(strFromMap(existing, "workspace_dir"), "workspace")
+		if v := strFromMap(existing, "db_path"); v != "" {
+			configMap["db_path"] = v
 		}
-		if v := existing["GOAT_LOG_DIR"]; v != "" {
-			envBuilder.WriteString(fmt.Sprintf("GOAT_LOG_DIR=%s\n", v))
+		if v := strFromMap(existing, "log_dir"); v != "" {
+			configMap["log_dir"] = v
 		}
-		if err := os.WriteFile(".env", []byte(envBuilder.String()), 0o600); err != nil {
-			return fmt.Errorf("write .env: %w", err)
+
+		// Write goated.json
+		if err := app.WriteConfigJSON(configPath, configMap); err != nil {
+			return fmt.Errorf("write goated.json: %w", err)
+		}
+		fmt.Println("Wrote goated.json")
+
+		// Write channel secrets to creds files
+		workspace := withDefault(strFromMap(existing, "workspace_dir"), "workspace")
+		credsDir := filepath.Join(workspace, "creds")
+		if err := writeChannelCreds(credsDir, ch); err != nil {
+			return fmt.Errorf("write creds: %w", err)
 		}
 
 		// Init DB
@@ -85,11 +90,10 @@ var bootstrapCmd = &cobra.Command{
 		}
 		fmt.Printf("Channel %q (%s) added and activated.\n", ch.Name, ch.Type)
 
-		// Write final .env with channel config active
-		if err := writeChannelEnv(cfg, ch); err != nil {
-			return fmt.Errorf("write .env: %w", err)
+		// Write final goated.json with channel config active
+		if err := writeChannelConfig(ch); err != nil {
+			return fmt.Errorf("write goated.json: %w", err)
 		}
-		fmt.Println("Wrote .env")
 
 		// Add hourly self-sync system cron
 		syncCmd := "./goat sync_self_to_github"
@@ -106,7 +110,6 @@ var bootstrapCmd = &cobra.Command{
 		fmt.Println("  2. Start:       ./goated daemon run")
 		fmt.Println("  3. Watchdog:    Install the daemon watchdog cron (checks every 2 min):")
 		fmt.Println()
-		// Resolve repo root from the running executable
 		repoRoot, _ := os.Getwd()
 		fmt.Printf("     (crontab -l 2>/dev/null; echo '*/2 * * * * %s/scripts/watchdog.sh') | crontab -\n", repoRoot)
 		fmt.Println()
@@ -114,26 +117,20 @@ var bootstrapCmd = &cobra.Command{
 	},
 }
 
-func loadExistingEnv(path string) map[string]string {
-	m := make(map[string]string)
-	f, err := os.Open(path)
-	if err != nil {
-		return m
+// strFromMap safely extracts a string value from a map[string]any.
+func strFromMap(m map[string]any, key string) string {
+	if m == nil {
+		return ""
 	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		m[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"'`)
+	v, ok := m[key]
+	if !ok {
+		return ""
 	}
-	return m
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return s
 }
 
 func init() {

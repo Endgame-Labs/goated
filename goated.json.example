@@ -1,0 +1,19 @@
+{
+  "gateway": "telegram",
+  "agent_runtime": "claude",
+  "default_timezone": "America/Los_Angeles",
+  "workspace_dir": "workspace",
+  "db_path": "",
+  "log_dir": "",
+  "telegram": {
+    "mode": "polling",
+    "webhook_addr": ":8080",
+    "webhook_path": "/telegram/webhook"
+  },
+  "slack": {
+    "attachments_root": "",
+    "attachment_max_bytes": 26214400,
+    "attachment_max_total_bytes": 263192576,
+    "attachment_max_parallel": 3
+  }
+}

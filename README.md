@@ -77,7 +77,7 @@ Both the **cron runner** and the **active runtime session** can spawn subagents.
 goated/
 ├── main.go                     # Entry point (builds ./goated)
 ├── build.sh                    # Builds all three binaries
-├── .env                        # Config (gitignored)
+├── goated.json                 # Config (gitignored)
 ├── goated.db                   # bbolt database (gitignored)
 │
 ├── cmd/
@@ -94,7 +94,7 @@ goated/
 │           └── start.go        # Foreground start (gateway + cron)
 │
 ├── internal/
-│   ├── app/config.go           # .env loader and config struct
+│   ├── app/config.go           # Viper config loader + cred helpers
 │   ├── agent/                  # Provider-neutral runtime contracts
 │   ├── claude/                 # Claude headless runtime (claude -p --resume, hooks-based)
 │   ├── claudetui/              # Claude TUI runtime implementations (tmux-based)
@@ -219,31 +219,40 @@ Run the interactive bootstrap:
 ./goated bootstrap
 ```
 
-This creates a `.env` file with your settings. You can also create it manually:
+This creates a `goated.json` config file and writes secrets to `workspace/creds/*.txt`. You can also create `goated.json` manually from `goated.json.example`:
 
 ```sh
-# .env
-GOAT_TELEGRAM_BOT_TOKEN=your-bot-token
-GOAT_DEFAULT_TIMEZONE=America/Los_Angeles
-GOAT_TELEGRAM_MODE=polling
-GOAT_ADMIN_CHAT_ID=your-chat-id
+cp goated.json.example goated.json
+# Edit goated.json with your settings, then set secrets:
+./goated creds set GOAT_TELEGRAM_BOT_TOKEN your-bot-token
+./goated creds set GOAT_ADMIN_CHAT_ID your-chat-id
 ```
 
-All env vars:
+**Migrating from `.env`:** If you have an existing `.env` file, run `./goated migrate-config` to split it into `goated.json` + creds files automatically.
 
-| Variable                            | Default               | Description                                       |
-| ----------------------------------- | --------------------- | ------------------------------------------------- |
-| `GOAT_TELEGRAM_BOT_TOKEN`           | (required)            | Telegram bot API token                            |
-| `GOAT_AGENT_RUNTIME`                | `claude`              | `claude`, `claude_tui`, or `codex_tui`            |
-| `GOAT_DEFAULT_TIMEZONE`             | `America/Los_Angeles` | Timezone for cron schedules                       |
-| `GOAT_TELEGRAM_MODE`                | `polling`             | `polling` or `webhook`                            |
-| `GOAT_ADMIN_CHAT_ID`                | (optional)            | Chat ID for admin alerts when auto-recovery fails |
-| `GOAT_WORKSPACE_DIR`                | `workspace`           | Agent working directory                           |
-| `GOAT_DB_PATH`                      | `./goated.db`         | Path to bbolt database                            |
-| `GOAT_LOG_DIR`                      | `./logs`              | Log directory                                     |
-| `GOAT_TELEGRAM_WEBHOOK_URL`         |                       | Public URL for webhook mode                       |
-| `GOAT_TELEGRAM_WEBHOOK_LISTEN_ADDR` | `:8080`               | Listen address for webhook mode                   |
-| `GOAT_TELEGRAM_WEBHOOK_PATH`        | `/telegram/webhook`   | Webhook endpoint path                             |
+Settings (`goated.json`):
+
+| Key                              | Default               | Description                                       |
+| -------------------------------- | --------------------- | ------------------------------------------------- |
+| `gateway`                        | `telegram`            | `slack` or `telegram`                             |
+| `agent_runtime`                  | `claude`              | `claude`, `claude_tui`, or `codex_tui`            |
+| `default_timezone`               | `America/Los_Angeles` | Timezone for cron schedules                       |
+| `workspace_dir`                  | `workspace`           | Agent working directory                           |
+| `db_path`                        | `./goated.db`         | Path to bbolt database                            |
+| `log_dir`                        | `./logs`              | Log directory                                     |
+| `telegram.mode`                  | `polling`             | `polling` or `webhook`                            |
+| `telegram.webhook_addr`          | `:8080`               | Listen address for webhook mode                   |
+| `telegram.webhook_path`          | `/telegram/webhook`   | Webhook endpoint path                             |
+
+Secrets (`workspace/creds/*.txt`, env vars override):
+
+| Creds file / Env var             | Description                                       |
+| -------------------------------- | ------------------------------------------------- |
+| `GOAT_TELEGRAM_BOT_TOKEN`       | Telegram bot API token (required for Telegram)    |
+| `GOAT_ADMIN_CHAT_ID`            | Chat ID for admin alerts when auto-recovery fails |
+| `GOAT_SLACK_BOT_TOKEN`          | Bot User OAuth Token (xoxb-...)                   |
+| `GOAT_SLACK_APP_TOKEN`          | App-Level Token (xapp-...) for Socket Mode        |
+| `GOAT_SLACK_CHANNEL_ID`         | Monitored Slack DM channel                        |
 
 ### Start
 

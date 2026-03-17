@@ -47,8 +47,8 @@ var doctorCmd = &cobra.Command{
 func runDoctorChecks(cfg app.Config) []checkResult {
 	var checks []checkResult
 
-	// 1. .env exists
-	checks = append(checks, checkDotEnv())
+	// 1. goated.json exists
+	checks = append(checks, checkConfigFile())
 
 	// 2. Runtime value is valid
 	checks = append(checks, checkRuntimeValue(cfg.AgentRuntime))
@@ -79,16 +79,20 @@ func runDoctorChecks(cfg app.Config) []checkResult {
 	return checks
 }
 
-func checkDotEnv() checkResult {
-	if _, err := os.Stat(".env"); err != nil {
+func checkConfigFile() checkResult {
+	if _, err := os.Stat("goated.json"); err != nil {
+		hint := "Run: ./goated bootstrap"
+		if _, envErr := os.Stat(".env"); envErr == nil {
+			hint = "Found .env — run: ./goated migrate-config"
+		}
 		return checkResult{
-			Name:    ".env file",
+			Name:    "goated.json",
 			OK:      false,
 			Detail:  "not found in current directory",
-			FixHint: "Run: ./goated bootstrap",
+			FixHint: hint,
 		}
 	}
-	return checkResult{Name: ".env file", OK: true, Detail: "found"}
+	return checkResult{Name: "goated.json", OK: true, Detail: "found"}
 }
 
 func checkRuntimeValue(runtime string) checkResult {
@@ -99,16 +103,16 @@ func checkRuntimeValue(runtime string) checkResult {
 			display = "(empty, defaults to claude)"
 		}
 		return checkResult{
-			Name:   "GOAT_AGENT_RUNTIME",
+			Name:   "agent_runtime",
 			OK:     true,
 			Detail: display,
 		}
 	default:
 		return checkResult{
-			Name:    "GOAT_AGENT_RUNTIME",
+			Name:    "agent_runtime",
 			OK:      false,
 			Detail:  fmt.Sprintf("unknown value %q", runtime),
-			FixHint: "Valid values: claude, claude_tui, codex_tui. Update .env or run: ./goated bootstrap",
+			FixHint: "Valid values: claude, claude_tui, codex_tui. Update goated.json or run: ./goated bootstrap",
 		}
 	}
 }
@@ -249,7 +253,7 @@ func checkGateway(cfg app.Config) checkResult {
 				Name:    "gateway (slack)",
 				OK:      false,
 				Detail:  fmt.Sprintf("missing: %s", strings.Join(missing, ", ")),
-				FixHint: "Set the missing environment variables in .env",
+				FixHint: "Run: goated creds set KEY VALUE",
 			}
 		}
 		return checkResult{Name: "gateway (slack)", OK: true, Detail: "configured"}
@@ -260,7 +264,7 @@ func checkGateway(cfg app.Config) checkResult {
 				Name:    "gateway (telegram)",
 				OK:      false,
 				Detail:  "GOAT_TELEGRAM_BOT_TOKEN not set",
-				FixHint: "Set GOAT_TELEGRAM_BOT_TOKEN in .env (get one from @BotFather on Telegram)",
+				FixHint: "Run: goated creds set GOAT_TELEGRAM_BOT_TOKEN <token> (get one from @BotFather on Telegram)",
 			}
 		}
 		return checkResult{Name: "gateway (telegram)", OK: true, Detail: "configured"}

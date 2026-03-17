@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"strings"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -37,10 +37,6 @@ var channelListCmd = &cobra.Command{
 			return nil
 		}
 
-		activeGateway := cfg.Gateway
-		activeID := cfg.AdminChatID // we'll match on the active channel name from meta
-		_ = activeID
-
 		activeChannelName := store.GetMeta("active_channel")
 
 		for _, ch := range channels {
@@ -50,7 +46,6 @@ var channelListCmd = &cobra.Command{
 			}
 			fmt.Printf("%s%-20s  type=%-10s  created=%s\n", marker, ch.Name, ch.Type, ch.CreatedAt)
 
-			// Show key config details
 			switch ch.Type {
 			case "telegram":
 				mode := ch.Config["mode"]
@@ -66,7 +61,6 @@ var channelListCmd = &cobra.Command{
 			}
 		}
 
-		_ = activeGateway
 		fmt.Println()
 		fmt.Println("* = active channel")
 		return nil
@@ -117,7 +111,13 @@ var channelSwitchCmd = &cobra.Command{
 			return err
 		}
 
-		if err := writeChannelEnv(cfg, ch); err != nil {
+		if err := writeChannelConfig(ch); err != nil {
+			return err
+		}
+
+		// Write channel secrets to creds files
+		credsDir := filepath.Join(cfg.WorkspaceDir, "creds")
+		if err := writeChannelCreds(credsDir, ch); err != nil {
 			return err
 		}
 
@@ -219,59 +219,77 @@ func promptChannel(reader *bufio.Reader) (*db.Channel, error) {
 	}, nil
 }
 
-// writeChannelEnv updates the .env file to activate the given channel.
-// Preserves non-gateway settings (DB path, workspace, timezone, etc.).
-func writeChannelEnv(cfg app.Config, ch *db.Channel) error {
-	existing := loadExistingEnv(".env")
-
-	var b strings.Builder
-	b.WriteString("# goated configuration\n")
-	b.WriteString(fmt.Sprintf("GOAT_GATEWAY=%s\n", ch.Type))
-	b.WriteString(fmt.Sprintf("GOAT_AGENT_RUNTIME=%s\n",
-		withDefault(existing["GOAT_AGENT_RUNTIME"], "claude")))
-
-	// Preserve common settings
-	b.WriteString(fmt.Sprintf("GOAT_DEFAULT_TIMEZONE=%s\n",
-		withDefault(existing["GOAT_DEFAULT_TIMEZONE"], "America/Los_Angeles")))
-	if v := existing["GOAT_DB_PATH"]; v != "" {
-		b.WriteString(fmt.Sprintf("GOAT_DB_PATH=%s\n", v))
-	}
-	b.WriteString(fmt.Sprintf("GOAT_WORKSPACE_DIR=%s\n",
-		withDefault(existing["GOAT_WORKSPACE_DIR"], "workspace")))
-	if v := existing["GOAT_LOG_DIR"]; v != "" {
-		b.WriteString(fmt.Sprintf("GOAT_LOG_DIR=%s\n", v))
-	}
-	if v := existing["GOAT_ADMIN_CHAT_ID"]; v != "" {
-		b.WriteString(fmt.Sprintf("GOAT_ADMIN_CHAT_ID=%s\n", v))
-	}
-	if v := existing["GOAT_CONTEXT_WINDOW_TOKENS"]; v != "" {
-		b.WriteString(fmt.Sprintf("GOAT_CONTEXT_WINDOW_TOKENS=%s\n", v))
+// writeChannelConfig updates goated.json to activate the given channel.
+// Preserves non-gateway settings (timezone, workspace, db path, etc.).
+func writeChannelConfig(ch *db.Channel) error {
+	configPath := "goated.json"
+	existing, err := app.ReadConfigJSON(configPath)
+	if err != nil {
+		return err
 	}
 
-	// Write gateway-specific settings
+	// Update gateway type
+	existing["gateway"] = ch.Type
+
+	// Update gateway-specific settings
 	switch ch.Type {
 	case "telegram":
-		b.WriteString(fmt.Sprintf("GOAT_TELEGRAM_BOT_TOKEN=%s\n", ch.Config["bot_token"]))
+		telegram := make(map[string]any)
+		if t, ok := existing["telegram"].(map[string]any); ok {
+			telegram = t
+		}
 		mode := withDefault(ch.Config["mode"], "polling")
-		b.WriteString(fmt.Sprintf("GOAT_TELEGRAM_MODE=%s\n", mode))
+		telegram["mode"] = mode
 		if mode == "webhook" {
-			if v := ch.Config["webhook_url"]; v != "" {
-				b.WriteString(fmt.Sprintf("GOAT_TELEGRAM_WEBHOOK_URL=%s\n", v))
-			}
 			if v := ch.Config["webhook_addr"]; v != "" {
-				b.WriteString(fmt.Sprintf("GOAT_TELEGRAM_WEBHOOK_LISTEN_ADDR=%s\n", v))
+				telegram["webhook_addr"] = v
 			}
 			if v := ch.Config["webhook_path"]; v != "" {
-				b.WriteString(fmt.Sprintf("GOAT_TELEGRAM_WEBHOOK_PATH=%s\n", v))
+				telegram["webhook_path"] = v
+			}
+		}
+		existing["telegram"] = telegram
+
+	case "slack":
+		// Slack settings section preserved (attachment limits etc.)
+		// Secrets go to creds files, not config
+	}
+
+	return app.WriteConfigJSON(configPath, existing)
+}
+
+// writeChannelCreds writes channel secrets to workspace/creds/*.txt.
+func writeChannelCreds(credsDir string, ch *db.Channel) error {
+	switch ch.Type {
+	case "telegram":
+		if v := ch.Config["bot_token"]; v != "" {
+			if err := app.WriteCred(credsDir, "GOAT_TELEGRAM_BOT_TOKEN", v); err != nil {
+				return err
+			}
+		}
+		if v := ch.Config["webhook_url"]; v != "" {
+			if err := app.WriteCred(credsDir, "GOAT_TELEGRAM_WEBHOOK_URL", v); err != nil {
+				return err
 			}
 		}
 	case "slack":
-		b.WriteString(fmt.Sprintf("GOAT_SLACK_BOT_TOKEN=%s\n", ch.Config["bot_token"]))
-		b.WriteString(fmt.Sprintf("GOAT_SLACK_APP_TOKEN=%s\n", ch.Config["app_token"]))
-		b.WriteString(fmt.Sprintf("GOAT_SLACK_CHANNEL_ID=%s\n", ch.Config["channel_id"]))
+		if v := ch.Config["bot_token"]; v != "" {
+			if err := app.WriteCred(credsDir, "GOAT_SLACK_BOT_TOKEN", v); err != nil {
+				return err
+			}
+		}
+		if v := ch.Config["app_token"]; v != "" {
+			if err := app.WriteCred(credsDir, "GOAT_SLACK_APP_TOKEN", v); err != nil {
+				return err
+			}
+		}
+		if v := ch.Config["channel_id"]; v != "" {
+			if err := app.WriteCred(credsDir, "GOAT_SLACK_CHANNEL_ID", v); err != nil {
+				return err
+			}
+		}
 	}
-
-	return os.WriteFile(".env", []byte(b.String()), 0o600)
+	return nil
 }
 
 func init() {

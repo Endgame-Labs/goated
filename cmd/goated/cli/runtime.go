@@ -3,8 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
-	"sort"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -119,13 +117,16 @@ var runtimeSwitchCmd = &cobra.Command{
 			return fmt.Errorf("runtime must be claude, claude_tui, or codex_tui")
 		}
 
-		existing := loadExistingEnv(".env")
-		existing["GOAT_AGENT_RUNTIME"] = target
-		if existing["GOAT_WORKSPACE_DIR"] == "" {
-			existing["GOAT_WORKSPACE_DIR"] = "workspace"
+		configPath := "goated.json"
+		existing, err := app.ReadConfigJSON(configPath)
+		if err != nil {
+			return fmt.Errorf("read goated.json: %w", err)
 		}
-		if err := writeEnvMap(".env", existing); err != nil {
-			return err
+
+		existing["agent_runtime"] = target
+
+		if err := app.WriteConfigJSON(configPath, existing); err != nil {
+			return fmt.Errorf("write goated.json: %w", err)
 		}
 
 		fmt.Printf("Configured runtime switched to %s.\n", target)
@@ -169,36 +170,6 @@ func sessionNameForRuntime(runtime string) string {
 	default:
 		return "goat_claude_tui_main"
 	}
-}
-
-func writeEnvMap(path string, values map[string]string) error {
-	if values == nil {
-		values = map[string]string{}
-	}
-	keys := make([]string, 0, len(values))
-	for k := range values {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	defer f.Close()
-
-	if _, err := fmt.Fprintln(f, "# goated configuration"); err != nil {
-		return err
-	}
-	for _, k := range keys {
-		if values[k] == "" {
-			continue
-		}
-		if _, err := fmt.Fprintf(f, "%s=%s\n", k, values[k]); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func init() {
