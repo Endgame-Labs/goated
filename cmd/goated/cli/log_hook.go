@@ -38,11 +38,17 @@ var logHookCmd = &cobra.Command{
 			return fmt.Errorf("reading stdin: %w", err)
 		}
 
-		// Sleep 15s to let creds filesystem settle after tool calls (e.g. goat creds set).
-		// Each hook invocation is its own process so these sleeps run in parallel.
-		time.Sleep(15 * time.Second)
-
-		// Create a fresh redactor from the creds dir (picks up any recently written creds)
+		// Create a redactor from the creds dir. For events that may carry
+		// credential values (tool use, user prompts), sleep first to let
+		// recently-written creds settle on disk before reading them.
+		needsCredSleep := true
+		switch eventName {
+		case "SessionStart", "SessionEnd", "Stop", "Notification", "SubagentStart", "SubagentStop", "TeammateIdle":
+			needsCredSleep = false
+		}
+		if needsCredSleep {
+			time.Sleep(15 * time.Second)
+		}
 		redactor := msglog.NewRedactor(credsDir)
 
 		// Extract inline cred values from the raw JSON — catches new cred values
