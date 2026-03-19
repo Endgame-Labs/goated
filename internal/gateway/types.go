@@ -33,6 +33,7 @@ type Responder interface {
 
 type Handler interface {
 	HandleMessage(ctx context.Context, msg IncomingMessage, responder Responder) error
+	HandleBatchMessage(ctx context.Context, msgs []IncomingMessage, responder Responder) error
 }
 
 type Connector interface {

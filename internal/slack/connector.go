@@ -92,6 +92,8 @@ type Connector struct {
 	mu         sync.Mutex
 	thinkingTS string          // timestamp of the current "_thinking..._" message
 	seenEvents map[string]bool // dedup retried Slack events
+
+	msgQueue chan slackevents.EventsAPIEvent // serializes message processing
 }
 
 type AttachmentConfig struct {
@@ -180,12 +182,18 @@ func NewConnector(botToken, appToken, channelID string, store OffsetStore, attac
 		sweepEvery:          defaultAttachmentSweepEvery,
 		parallelHint:        maxParallel,
 		seenEvents:          make(map[string]bool),
+		msgQueue:            make(chan slackevents.EventsAPIEvent, 100),
 	}, nil
 }
 
 // Run connects via Socket Mode and processes incoming messages.
 func (c *Connector) Run(ctx context.Context, handler gateway.Handler) error {
 	go c.runAttachmentSweeper(ctx)
+
+	// Single goroutine processes messages sequentially (like Telegram).
+	// This ensures only one thinking indicator is active at a time and
+	// messages are handled in order.
+	go c.processMessageQueue(ctx, handler)
 
 	go func() {
 		for evt := range c.socket.Events {
@@ -196,7 +204,7 @@ func (c *Connector) Run(ctx context.Context, handler gateway.Handler) error {
 					continue
 				}
 				c.socket.Ack(*evt.Request)
-				go c.handleEventsAPI(ctx, handler, eventsAPIEvent)
+				c.msgQueue <- eventsAPIEvent
 
 			case socketmode.EventTypeConnecting:
 				fmt.Fprintln(os.Stderr, "Slack Socket Mode: connecting...")
@@ -235,9 +243,89 @@ func (c *Connector) Run(ctx context.Context, handler gateway.Handler) error {
 	return c.socket.RunContext(ctx)
 }
 
+// processMessageQueue drains msgQueue sequentially, processing one message
+// at a time. After each message completes, any messages that accumulated
+// during processing are drained and sent as a single batch.
+func (c *Connector) processMessageQueue(ctx context.Context, handler gateway.Handler) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-c.msgQueue:
+			c.handleEventsAPI(ctx, handler, event)
+			// After processing, drain any messages that arrived and batch them
+			c.drainAndBatch(ctx, handler)
+		}
+	}
+}
+
+// drainAndBatch collects all currently queued events and sends them as a
+// single batch message. This prevents ordering issues when multiple messages
+// arrive while the runtime is busy processing.
+func (c *Connector) drainAndBatch(ctx context.Context, handler gateway.Handler) {
+	var batch []slackevents.EventsAPIEvent
+	for {
+		select {
+		case e := <-c.msgQueue:
+			batch = append(batch, e)
+		default:
+			// No more queued events
+			if len(batch) == 0 {
+				return
+			}
+			c.handleBatchEventsAPI(ctx, handler, batch)
+			// Recurse: the batch handler may have taken time, more could have arrived
+			c.drainAndBatch(ctx, handler)
+			return
+		}
+	}
+}
+
 func (c *Connector) handleEventsAPI(ctx context.Context, handler gateway.Handler, event slackevents.EventsAPIEvent) {
-	if event.Type != slackevents.CallbackEvent {
+	msg, ok := c.eventToMessage(ctx, event)
+	if !ok {
 		return
+	}
+
+	// Post a thinking indicator while processing
+	c.postThinking(msg.ChatID)
+
+	if err := handler.HandleMessage(ctx, msg, c); err != nil {
+		_ = c.SendMessage(ctx, msg.ChatID, "Error: "+err.Error())
+	}
+}
+
+// handleBatchEventsAPI processes multiple events as a single batch message.
+func (c *Connector) handleBatchEventsAPI(ctx context.Context, handler gateway.Handler, events []slackevents.EventsAPIEvent) {
+	var msgs []gateway.IncomingMessage
+	for _, event := range events {
+		msg, ok := c.eventToMessage(ctx, event)
+		if !ok {
+			continue
+		}
+		msgs = append(msgs, msg)
+	}
+
+	if len(msgs) == 0 {
+		return
+	}
+
+	// Post a thinking indicator
+	c.postThinking(msgs[0].ChatID)
+
+	fmt.Fprintf(os.Stderr, "[%s] batching %d queued messages\n",
+		time.Now().Format(time.RFC3339), len(msgs))
+
+	if err := handler.HandleBatchMessage(ctx, msgs, c); err != nil {
+		_ = c.SendMessage(ctx, msgs[0].ChatID, "Error: "+err.Error())
+	}
+}
+
+// eventToMessage converts a Slack EventsAPI event into a gateway IncomingMessage.
+// Returns false if the event should be skipped (bot message, dedup, wrong channel, etc).
+func (c *Connector) eventToMessage(ctx context.Context, event slackevents.EventsAPIEvent) (gateway.IncomingMessage, bool) {
+	if event.Type != slackevents.CallbackEvent {
+		return gateway.IncomingMessage{}, false
 	}
 	var outerEventID string
 	switch cb := event.Data.(type) {
@@ -248,66 +336,61 @@ func (c *Connector) handleEventsAPI(ctx context.Context, handler gateway.Handler
 	}
 
 	innerEvent := event.InnerEvent
-	switch ev := innerEvent.Data.(type) {
-	case *slackevents.MessageEvent:
-		if ev.BotID != "" {
-			return
-		}
-
-		files := extractSlackFiles(ev)
-		if ev.SubType != "" && ev.SubType != slack.MsgSubTypeFileShare && len(files) == 0 {
-			return
-		}
-
-		dedupKey := c.messageDedupKey(event.TeamID, outerEventID, ev, files)
-		c.mu.Lock()
-		if c.seenEvents[dedupKey] {
-			c.mu.Unlock()
-			return
-		}
-		c.seenEvents[dedupKey] = true
-		c.mu.Unlock()
-
-		// Redirect messages from non-monitored channels
-		if ev.Channel != c.channelID {
-			_ = c.SendMessage(ctx, ev.Channel,
-				"This isn't the channel I'm monitoring. Go to the configured DM channel to chat with me.")
-			return
-		}
-
-		text := strings.TrimSpace(ev.Text)
-		attachments, attachmentResults, failed, succeeded := c.processAttachments(ctx, ev, files)
-		if text == "" && len(files) == 0 {
-			return
-		}
-
-		msg := gateway.IncomingMessage{
-			Channel:              "slack",
-			ChatID:               ev.Channel,
-			UserID:               ev.User,
-			Text:                 text,
-			MessageID:            ev.TimeStamp,
-			ThreadID:             ev.ThreadTimeStamp,
-			Attachments:          attachments,
-			AttachmentResults:    attachmentResults,
-			AttachmentsFailed:    failed,
-			AttachmentsSucceeded: succeeded,
-		}
-
-		if len(files) > 0 {
-			fmt.Fprintf(os.Stderr,
-				"slack attachments summary: count=%d accepted=%d failed=%d bytes=%d\n",
-				len(files), len(succeeded), len(failed), sumAttachmentBytes(succeeded),
-			)
-		}
-
-		// Post a thinking indicator while processing
-		c.postThinking(ev.Channel)
-
-		if err := handler.HandleMessage(ctx, msg, c); err != nil {
-			_ = c.SendMessage(ctx, ev.Channel, "Error: "+err.Error())
-		}
+	ev, ok := innerEvent.Data.(*slackevents.MessageEvent)
+	if !ok {
+		return gateway.IncomingMessage{}, false
 	}
+
+	if ev.BotID != "" {
+		return gateway.IncomingMessage{}, false
+	}
+
+	files := extractSlackFiles(ev)
+	if ev.SubType != "" && ev.SubType != slack.MsgSubTypeFileShare && len(files) == 0 {
+		return gateway.IncomingMessage{}, false
+	}
+
+	dedupKey := c.messageDedupKey(event.TeamID, outerEventID, ev, files)
+	c.mu.Lock()
+	if c.seenEvents[dedupKey] {
+		c.mu.Unlock()
+		return gateway.IncomingMessage{}, false
+	}
+	c.seenEvents[dedupKey] = true
+	c.mu.Unlock()
+
+	// Redirect messages from non-monitored channels
+	if ev.Channel != c.channelID {
+		_ = c.SendMessage(ctx, ev.Channel,
+			"This isn't the channel I'm monitoring. Go to the configured DM channel to chat with me.")
+		return gateway.IncomingMessage{}, false
+	}
+
+	text := strings.TrimSpace(ev.Text)
+	attachments, attachmentResults, failed, succeeded := c.processAttachments(ctx, ev, files)
+	if text == "" && len(files) == 0 {
+		return gateway.IncomingMessage{}, false
+	}
+
+	if len(files) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"slack attachments summary: count=%d accepted=%d failed=%d bytes=%d\n",
+			len(files), len(succeeded), len(failed), sumAttachmentBytes(succeeded),
+		)
+	}
+
+	return gateway.IncomingMessage{
+		Channel:              "slack",
+		ChatID:               ev.Channel,
+		UserID:               ev.User,
+		Text:                 text,
+		MessageID:            ev.TimeStamp,
+		ThreadID:             ev.ThreadTimeStamp,
+		Attachments:          attachments,
+		AttachmentResults:    attachmentResults,
+		AttachmentsFailed:    failed,
+		AttachmentsSucceeded: succeeded,
+	}, true
 }
 
 // SendMessage sends a message to the specified Slack channel, converting
@@ -334,8 +417,16 @@ func (c *Connector) SendMessage(_ context.Context, channelID, text string) error
 
 // postThinking posts a "_thinking..._" message and records its timestamp
 // so it can be updated with the real response or deleted later.
+// Skips posting if a thinking indicator is already active (e.g. queued messages).
 // Also spawns a TTL reaper to guarantee cleanup even if normal paths fail.
 func (c *Connector) postThinking(channel string) {
+	c.mu.Lock()
+	if c.thinkingTS != "" {
+		c.mu.Unlock()
+		return // already showing a thinking indicator
+	}
+	c.mu.Unlock()
+
 	_, ts, err := c.api.PostMessage(channel,
 		slack.MsgOptionText("_thinking..._", false),
 	)

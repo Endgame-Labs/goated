@@ -24,6 +24,9 @@ func (s stubRuntime) ResetConversation(context.Context, string) (agent.ResetResu
 func (s stubRuntime) SendUserPrompt(context.Context, string, string, string, *agent.MessageAttachments, string, string) error {
 	return nil
 }
+func (s stubRuntime) SendBatchPrompt(context.Context, string, string, []agent.PromptMessage) error {
+	return nil
+}
 func (s stubRuntime) SendControlCommand(context.Context, string) error { return nil }
 func (s stubRuntime) GetContextEstimate(context.Context, string) (agent.ContextEstimate, error) {
 	return agent.ContextEstimate{}, nil

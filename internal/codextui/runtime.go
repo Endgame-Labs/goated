@@ -112,6 +112,14 @@ func (s *SessionRuntime) SendUserPrompt(ctx context.Context, channel, chatID, us
 	return tmux.PasteAndEnterFor(ctx, s.sessionName(), agent.BuildPromptEnvelope(channel, chatID, userPrompt, nil, messageID, threadID))
 }
 
+func (s *SessionRuntime) SendBatchPrompt(ctx context.Context, channel, chatID string, messages []agent.PromptMessage) error {
+	if err := s.EnsureSession(ctx); err != nil {
+		return err
+	}
+	s.markSend()
+	return tmux.PasteAndEnterFor(ctx, s.sessionName(), agent.BuildBatchEnvelope(channel, chatID, messages))
+}
+
 func (s *SessionRuntime) SendControlCommand(ctx context.Context, text string) error {
 	if err := s.EnsureSession(ctx); err != nil {
 		return err

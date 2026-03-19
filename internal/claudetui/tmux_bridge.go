@@ -56,6 +56,15 @@ func (b *TmuxBridge) SendUserPrompt(ctx context.Context, channel, chatID string,
 	return tmux.PasteAndEnterFor(ctx, b.sessionName(), wrapped)
 }
 
+func (b *TmuxBridge) SendBatchPrompt(ctx context.Context, channel, chatID string, messages []agent.PromptMessage) error {
+	if err := b.EnsureSession(ctx); err != nil {
+		return err
+	}
+
+	wrapped := agent.BuildBatchEnvelope(channel, chatID, messages)
+	return tmux.PasteAndEnterFor(ctx, b.sessionName(), wrapped)
+}
+
 // IsSessionBusy returns true if Claude is not idle. Uses content-change
 // detection (two captures 2s apart) rather than a single ❯ check, because
 // the prompt is often visible even while Claude is actively working.

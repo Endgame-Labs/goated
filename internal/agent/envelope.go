@@ -51,6 +51,62 @@ func BuildPromptEnvelope(channel, chatID, userPrompt string, attachments *Messag
 	return pydict.EncodeOrdered(kvs)
 }
 
+// PromptMessage represents a single message in a batch prompt.
+type PromptMessage struct {
+	Text        string
+	Attachments *MessageAttachments
+	MessageID   string
+	ThreadID    string
+}
+
+// BuildBatchEnvelope constructs a pydict-encoded prompt envelope containing
+// multiple user messages. Used when messages accumulate while the runtime is
+// busy processing a previous prompt.
+func BuildBatchEnvelope(channel, chatID string, messages []PromptMessage) string {
+	var formattingDoc string
+	switch channel {
+	case "slack":
+		formattingDoc = "SLACK_MESSAGE_FORMATTING.md"
+	default:
+		formattingDoc = "TELEGRAM_MESSAGE_FORMATTING.md"
+	}
+
+	// Build the messages array
+	msgItems := make([]any, 0, len(messages))
+	for _, m := range messages {
+		item := map[string]any{
+			"text": strings.TrimSpace(m.Text),
+		}
+		if m.MessageID != "" {
+			item["message_id"] = m.MessageID
+		}
+		if m.ThreadID != "" {
+			item["thread_id"] = m.ThreadID
+		}
+		if m.Attachments != nil {
+			paths := make([]any, 0, len(m.Attachments.Paths))
+			for _, p := range m.Attachments.Paths {
+				paths = append(paths, p)
+			}
+			item["attachments"] = paths
+			item["attachments_failed"] = attachmentInfosToMaps(m.Attachments.Failed)
+			item["attachments_succeeded"] = attachmentInfosToMaps(m.Attachments.Succeeded)
+		}
+		msgItems = append(msgItems, item)
+	}
+
+	kvs := []pydict.KV{
+		{"messages", msgItems},
+		{"source", channel},
+		{"chat_id", chatID},
+		{"respond_with", fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
+		{"formatting", formattingDoc},
+		{"instruction", "Send a plan message first if the task will take longer than 30s."},
+	}
+
+	return pydict.EncodeOrdered(kvs)
+}
+
 func attachmentInfosToMaps(infos []AttachmentInfo) []any {
 	out := make([]any, 0, len(infos))
 	for _, r := range infos {

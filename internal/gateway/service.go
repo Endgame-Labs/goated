@@ -36,7 +36,8 @@ type Service struct {
 	// after the flush timeout. If nil, the caller-provided ctx is used.
 	DrainCtx context.Context
 
-	inflight sync.WaitGroup
+	inflight  sync.WaitGroup
+	draining  atomic.Bool // set when shutdown begins; prevents new inflight work
 
 	msgCount     uint64 // atomic; counts non-command messages
 	mu           sync.Mutex
@@ -46,7 +47,18 @@ type Service struct {
 
 // WaitInflight blocks until all in-flight message handlers have completed.
 func (s *Service) WaitInflight() {
+	s.draining.Store(true)
 	s.inflight.Wait()
+}
+
+// trackInflight increments the in-flight counter if the service is not
+// draining. Returns false if the service is shutting down.
+func (s *Service) trackInflight() bool {
+	if s.draining.Load() {
+		return false
+	}
+	s.inflight.Add(1)
+	return true
 }
 
 func (s *Service) handleCtx(callerCtx context.Context) context.Context {
@@ -57,7 +69,9 @@ func (s *Service) handleCtx(callerCtx context.Context) context.Context {
 }
 
 func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, responder Responder) error {
-	s.inflight.Add(1)
+	if !s.trackInflight() {
+		return nil // shutting down, drop message
+	}
 	defer s.inflight.Done()
 
 	// Use drain context so in-flight work survives gateway shutdown
@@ -129,6 +143,119 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 	return s.sendWithRetry(ctx, msg, responder)
 }
 
+// HandleBatchMessage processes multiple messages that accumulated while the
+// runtime was busy. Each message is logged individually, then they are sent
+// to the runtime as a single batch prompt.
+func (s *Service) HandleBatchMessage(ctx context.Context, msgs []IncomingMessage, responder Responder) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	if len(msgs) == 1 {
+		return s.HandleMessage(ctx, msgs[0], responder)
+	}
+
+	if !s.trackInflight() {
+		return nil // shutting down, drop message
+	}
+	defer s.inflight.Done()
+
+	ctx = s.handleCtx(ctx)
+
+	// Generate a single request ID for the batch
+	requestID := msglog.NewRequestID()
+	ctx = msglog.WithRequestID(ctx, requestID)
+
+	// Log each message individually
+	for i := range msgs {
+		msgs[i].Text = strings.TrimSpace(msgs[i].Text)
+		if msgs[i].Text == "" && len(msgs[i].Attachments) == 0 {
+			continue
+		}
+		s.logUserMessage(requestID, msgs[i], msglog.StatusPending)
+	}
+
+	// Check session health before sending
+	if err := s.ensureHealthySession(ctx, responder); err != nil {
+		chatID := msgs[0].ChatID
+		return responder.SendMessage(ctx, chatID, s.friendlyError(err))
+	}
+
+	// Build batch prompt messages
+	channel := msgs[0].Channel
+	chatID := msgs[0].ChatID
+	promptMsgs := make([]agent.PromptMessage, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Text == "" && len(m.Attachments) == 0 {
+			continue
+		}
+		promptMsgs = append(promptMsgs, agent.PromptMessage{
+			Text:        m.Text,
+			Attachments: msgAttachments(m),
+			MessageID:   m.MessageID,
+			ThreadID:    m.ThreadID,
+		})
+	}
+
+	if len(promptMsgs) == 0 {
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "[%s] sending batch of %d messages\n",
+		time.Now().Format(time.RFC3339), len(promptMsgs))
+
+	return s.sendBatchWithRetry(ctx, channel, chatID, promptMsgs, responder)
+}
+
+// sendBatchWithRetry sends a batch prompt and retries on transient API errors.
+func (s *Service) sendBatchWithRetry(ctx context.Context, channel, chatID string, msgs []agent.PromptMessage, responder Responder) error {
+	requestID := msglog.RequestIDFromContext(ctx)
+	prevSessionID := s.readSessionID()
+
+	for attempt := 0; attempt <= maxSendRetries; attempt++ {
+		s.logStatus(requestID, msglog.EntryUserMessage, msglog.StatusSentToAgent)
+
+		if err := s.Session.SendBatchPrompt(ctx, channel, chatID, msgs); err != nil {
+			s.logEvent(requestID, msglog.EventData{Name: "send_failed", Detail: err.Error()})
+			return responder.SendMessage(ctx, chatID, s.friendlyError(err))
+		}
+
+		state, idleErr := s.Session.WaitForAwaitingInput(ctx, postSendTimeout)
+		if idleErr != nil {
+			fmt.Fprintf(os.Stderr, "[%s] WaitForAwaitingInput: %v (suppressed)\n",
+				time.Now().Format(time.RFC3339), idleErr)
+			return nil
+		}
+		if !state.SafeIdle() {
+			if state.Kind == agent.SessionStateBlockedAuth || state.Kind == agent.SessionStateBlockedIntervene {
+				return responder.SendMessage(ctx, chatID, s.runtimeDisplayName()+" needs manual intervention: "+state.Summary)
+			}
+			return nil
+		}
+
+		apiErr := s.Session.DetectRetryableError(ctx)
+		if apiErr == "" {
+			s.logStatus(requestID, msglog.EntryUserMessage, msglog.StatusAgentReceived)
+			s.detectSessionChange(requestID, prevSessionID)
+			return nil
+		}
+
+		s.logEvent(requestID, msglog.EventData{Name: "api_error", Detail: apiErr})
+		fmt.Fprintf(os.Stderr, "[%s] API error after batch send (attempt %d/%d): %s\n",
+			time.Now().Format(time.RFC3339), attempt+1, maxSendRetries+1, apiErr)
+
+		if attempt < maxSendRetries {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
+
+	return responder.SendMessage(ctx, chatID,
+		s.runtimeDisplayName()+" hit an API error and retries didn't help. Try again in a minute, or use /clear if it persists.")
+}
+
 // logUserMessage logs a user message if the logger is configured.
 func (s *Service) logUserMessage(requestID string, msg IncomingMessage, status msglog.MessageStatus) {
 	if s.MsgLogger == nil {
@@ -176,29 +303,9 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 	for attempt := 0; attempt <= maxSendRetries; attempt++ {
 		s.logStatus(requestID, msglog.EntryUserMessage, msglog.StatusSentToAgent)
 
-		// If the runtime is already processing a message, notify the user
-		// that their message is queued. SendUserPrompt will block until
-		// the previous process finishes.
-		// Skip the notification if this is the first user message in this
-		// daemon session (msgCount == 1) — the contention is likely from
-		// stuck-message replay, not a previous user interaction.
-		queued := false
-		currentCount := atomic.LoadUint64(&s.msgCount)
-		if currentCount > 1 {
-			if state, err := s.Session.GetSessionState(ctx); err == nil && state.Kind == agent.SessionStateGenerating {
-				queued = true
-				_ = responder.SendMessage(ctx, msg.ChatID,
-					"[System] I've queued your message to read after I finish the previous work....")
-			}
-		}
-
 		if err := s.Session.SendUserPrompt(ctx, msg.Channel, msg.ChatID, msg.Text, msgAttachments(msg), msg.MessageID, msg.ThreadID); err != nil {
 			s.logEvent(requestID, msglog.EventData{Name: "send_failed", Detail: err.Error()})
 			return responder.SendMessage(ctx, msg.ChatID, s.friendlyError(err))
-		}
-
-		if queued {
-			_ = responder.SendMessage(ctx, msg.ChatID, "[System] Now reading your queued message.")
 		}
 
 		// Wait for the runtime to return to an input-ready state, then check for errors.
