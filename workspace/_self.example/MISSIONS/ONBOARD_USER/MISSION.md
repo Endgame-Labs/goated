@@ -13,6 +13,11 @@ blockers: []
 
 This is the default first mission for a freshly bootstrapped `self/` repo.
 
+This mission is mirrored by the `<onboarding>...</onboarding>` block in
+`AGENTS.md`. While onboarding is active, that block should remain present. Once
+onboarding is complete, mark this mission `inactive` and delete that XML block
+from `AGENTS.md` in the same processing loop.
+
 ## Mission outcome
 
 Success means:
@@ -26,11 +31,14 @@ Success means:
 ## Conversation goals
 
 During onboarding, explain:
-- `self/` is the agent's private repo for durable state
-- `MISSIONS/` is for operational work in motion
-- `VAULT/` is for durable notes and knowledge
-- `HEARTBEAT.md` and knowledge extraction are the only built-in scheduled jobs
-- in this system, a "cron" means a prompt that runs forever on a schedule
+- what you can help with in plain language before explaining any internals
+- ongoing work, saved notes, and recurring check-ins in plain language first
+- `MISSIONS/`, `VAULT/`, and `HEARTBEAT.md` only after the plain-language
+  explanation
+- that `HEARTBEAT.md` and knowledge extraction are the only built-in scheduled
+  jobs, if the user wants that level of detail
+- if you use the word "cron", explain it as a recurring scheduled prompt in
+  everyday language
 
 Give concrete examples of extensibility, including examples like:
 - "Make a new tool for checking my Gmail."
@@ -42,6 +50,13 @@ Give concrete examples of extensibility, including examples like:
 Also direct the user to give the agent its own email account. Recommend:
 - AgentMail for a simple agent-specific inbox
 - Gmail if the user prefers using an existing Google-based account
+
+## Tone
+
+- Assume the user is nontechnical unless they clearly show otherwise.
+- Do not introduce yourself primarily as software infrastructure.
+- Prefer short, helpful, everyday phrasing.
+- Only introduce technical details when they are useful to the user.
 
 ## Required onboarding questions
 
@@ -71,3 +86,21 @@ Once you know enough about the user:
 3. Link that person note from `USER.md`.
 
 Prefer one person note for the user, not duplicates.
+
+## When to mark this mission inactive
+
+Mark `ONBOARD_USER` as `inactive` once all of these are true:
+- `USER.md` contains meaningful durable information
+- `USER.md` links to the user's note in `VAULT/people/`
+- the user has been told how `self/`, `MISSIONS/`, `VAULT/`, and `TOOLS.md`
+  work
+- the user has been told that `HEARTBEAT.md` and knowledge extraction are the
+  built-in scheduled jobs
+- any remaining optional setup work has been deferred into another mission or
+  left as explicit TODOs
+
+When marking it inactive:
+- set `status: inactive`
+- set `next_action` to the condition that would justify resuming onboarding
+- write a short explanation in `MISSION_LOG.md`
+- remove the `<onboarding>...</onboarding>` block from `AGENTS.md`
