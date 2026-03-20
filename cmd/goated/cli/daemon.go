@@ -428,8 +428,8 @@ var daemonRestartCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("start daemon: %w", err)
 		}
-		rec.NewPID = fmt.Sprintf("goated daemon started (pid=%s, log=%s)", pid, logPath)
-		fmt.Printf("%s\n", rec.NewPID)
+		rec.NewPID = pid
+		fmt.Printf("goated daemon started (pid=%s, log=%s)\n", pid, logPath)
 
 		// Append restart record
 		if err := appendRestartRecord(restartLog, rec); err != nil {
