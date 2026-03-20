@@ -184,7 +184,7 @@ func (r *Runner) runSubagent(ctx context.Context, job db.CronJob, jobLog string)
 	if job.Silent {
 		promptChatID = ""
 	}
-	prompt := subagent.BuildPrompt("Read CRON.md before executing.", userPrompt, promptChatID, "cron", jobLog)
+	prompt := subagent.BuildPrompt(subagent.BuildPreamble("Read CRON.md before executing."), userPrompt, promptChatID, "cron", jobLog)
 	result, err := r.Headless.RunSync(ctx, r.Store, agent.HeadlessRequest{
 		WorkspaceDir: r.WorkspaceDir,
 		Prompt:       prompt,

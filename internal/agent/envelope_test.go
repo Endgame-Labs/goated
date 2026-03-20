@@ -98,3 +98,26 @@ func TestBuildPromptEnvelope_IsPydictFormat(t *testing.T) {
 		t.Errorf("expected pydict format (dict literal), got: %s", trimmed)
 	}
 }
+
+func TestBuildSystemNoticeEnvelope(t *testing.T) {
+	result := BuildSystemNoticeEnvelope("telegram", "123", "cron", "nightly knowledge extraction completed", map[string]string{
+		"log_path": "/tmp/job.log",
+		"source":   "knowledge_extraction",
+	})
+
+	if !strings.Contains(result, `"kind"`) || !strings.Contains(result, "system_notice") {
+		t.Fatal("missing system_notice kind")
+	}
+	if !strings.Contains(result, `"notice_source"`) || !strings.Contains(result, "cron") {
+		t.Fatal("missing notice_source")
+	}
+	if !strings.Contains(result, "No response is needed unless the user explicitly asks about it.") {
+		t.Fatal("missing no-op instruction")
+	}
+	if strings.Contains(result, "respond_with") {
+		t.Fatal("system notice should not include respond_with")
+	}
+	if !strings.Contains(result, `"metadata"`) || !strings.Contains(result, "log_path") {
+		t.Fatal("missing metadata")
+	}
+}

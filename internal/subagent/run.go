@@ -12,6 +12,16 @@ import (
 	"goated/internal/tmux"
 )
 
+const basePreamble = "You are a Goated subagent. Read self/AGENTS.md first for instructions on how to operate in this workspace."
+
+func BuildPreamble(extra string) string {
+	extra = strings.TrimSpace(extra)
+	if extra == "" {
+		return basePreamble
+	}
+	return basePreamble + "\n\n" + extra
+}
+
 // BuildPrompt constructs the prompt for a headless subagent.
 // preamble is an optional prefix (e.g. "Read CRON.md before executing.").
 // chatID, if non-empty, adds send_user_message instructions.
@@ -34,6 +44,7 @@ func BuildPrompt(preamble, userPrompt, chatID, source, logPath string) string {
 			sendCmd += fmt.Sprintf(" --log %s", logPath)
 		}
 		b.WriteString(sendCmd + "\n")
+		b.WriteString("Keep any provided --source/--log flags intact so the main session receives a no-op system notice for context.\n")
 		b.WriteString("\nSee GOATED_CLI_README.md for formatting details.\n")
 	}
 	return b.String()

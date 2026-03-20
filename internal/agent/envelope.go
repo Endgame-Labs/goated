@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"goated/internal/pydict"
@@ -104,6 +105,37 @@ func BuildBatchEnvelope(channel, chatID string, messages []PromptMessage) string
 		{"instruction", "Send a plan message first if the task will take longer than 30s."},
 	}
 
+	return pydict.EncodeOrdered(kvs)
+}
+
+func BuildSystemNoticeEnvelope(channel, chatID, source, message string, metadata map[string]string) string {
+	var metaItems []any
+	if len(metadata) > 0 {
+		keys := make([]string, 0, len(metadata))
+		for k := range metadata {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		metaItems = make([]any, 0, len(keys))
+		for _, k := range keys {
+			metaItems = append(metaItems, map[string]any{
+				"key":   k,
+				"value": metadata[k],
+			})
+		}
+	}
+
+	kvs := []pydict.KV{
+		{"kind", "system_notice"},
+		{"source", channel},
+		{"chat_id", chatID},
+		{"notice_source", strings.TrimSpace(source)},
+		{"message", strings.TrimSpace(message)},
+		{"instruction", "Informational system message for context only. No response is needed unless the user explicitly asks about it."},
+	}
+	if len(metaItems) > 0 {
+		kvs = append(kvs, pydict.KV{"metadata", metaItems})
+	}
 	return pydict.EncodeOrdered(kvs)
 }
 

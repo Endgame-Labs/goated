@@ -27,11 +27,11 @@ type SessionRuntime struct {
 	model        string // claude CLI --model value; empty means default
 	redactor     *msglog.Redactor
 
-	mu        sync.Mutex
-	proc      *exec.Cmd  // current running process, nil if idle
-	procErr   error       // last process error
-	lastStderr string     // last captured stderr
-	done      chan struct{} // closed when proc exits
+	mu         sync.Mutex
+	proc       *exec.Cmd     // current running process, nil if idle
+	procErr    error         // last process error
+	lastStderr string        // last captured stderr
+	done       chan struct{} // closed when proc exits
 }
 
 func NewSessionRuntime(workspaceDir, logDir, model string) *SessionRuntime {
@@ -109,7 +109,6 @@ func (r *SessionRuntime) hooksSettingsFile() string {
 	}
 	return p
 }
-
 
 // sessionIDPath returns the path to the session ID file.
 func (r *SessionRuntime) sessionIDPath() string {
@@ -441,6 +440,11 @@ func (r *SessionRuntime) ResetConversation(ctx context.Context, chatID string) (
 func (r *SessionRuntime) SendControlCommand(ctx context.Context, text string) error {
 	// No-op for headless claude -p runtime. Claude -p handles context internally.
 	return nil
+}
+
+func (r *SessionRuntime) SendSystemNotice(ctx context.Context, channel, chatID, source, message string, metadata map[string]string) error {
+	envelope := agent.BuildSystemNoticeEnvelope(channel, chatID, source, message, metadata)
+	return r.sendEnvelope(ctx, envelope)
 }
 
 func (r *SessionRuntime) GetContextEstimate(ctx context.Context, chatID string) (agent.ContextEstimate, error) {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"goated/internal/agent"
 	"goated/internal/app"
 	cronpkg "goated/internal/cron"
 	"goated/internal/db"
@@ -197,7 +198,7 @@ var daemonRunCmd = &cobra.Command{
 				Store:        store,
 				WorkspaceDir: cfg.WorkspaceDir,
 				LogDir:       cfg.LogDir,
-				Notifier:     conn,
+				Notifier:     cronNoticeNotifier{responder: conn, session: runtime.Session(), channel: cfg.Gateway},
 				Headless:     runtime.Headless(),
 			}
 			go runCronTicker(ctx, runner)
@@ -227,7 +228,7 @@ var daemonRunCmd = &cobra.Command{
 				Store:        store,
 				WorkspaceDir: cfg.WorkspaceDir,
 				LogDir:       cfg.LogDir,
-				Notifier:     conn,
+				Notifier:     cronNoticeNotifier{responder: conn, session: runtime.Session(), channel: cfg.Gateway},
 				Headless:     runtime.Headless(),
 			}
 			go runCronTicker(ctx, runner)
@@ -249,7 +250,7 @@ var daemonRunCmd = &cobra.Command{
 		}
 
 		if responder != nil {
-			go runDaemonSocket(ctx, socketPath, responder, msgLogger, cfg.Gateway)
+			go runDaemonSocket(ctx, socketPath, responder, runtime.Session(), msgLogger, cfg.Gateway)
 		}
 
 		if err := runGateway(); err != nil && err != context.Canceled {
@@ -283,6 +284,8 @@ type daemonSendRequest struct {
 	FilePath  string `json:"file_path,omitempty"`
 	Caption   string `json:"caption,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
+	Source    string `json:"source,omitempty"`
+	LogPath   string `json:"log_path,omitempty"`
 }
 
 type daemonSendResponse struct {
@@ -290,7 +293,7 @@ type daemonSendResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
-func runDaemonSocket(ctx context.Context, socketPath string, responder gateway.Responder, logger *msglog.Logger, gatewayName string) {
+func runDaemonSocket(ctx context.Context, socketPath string, responder gateway.Responder, session agent.SessionRuntime, logger *msglog.Logger, gatewayName string) {
 	lc := net.ListenConfig{}
 	ln, err := lc.Listen(ctx, "unix", socketPath)
 	if err != nil {
@@ -314,11 +317,11 @@ func runDaemonSocket(ctx context.Context, socketPath string, responder gateway.R
 			fmt.Fprintf(os.Stderr, "[%s] daemon socket accept failed: %v\n", time.Now().Format(time.RFC3339), err)
 			continue
 		}
-		go handleDaemonSocketConn(ctx, conn, responder, logger, gatewayName)
+		go handleDaemonSocketConn(ctx, conn, responder, session, logger, gatewayName)
 	}
 }
 
-func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gateway.Responder, logger *msglog.Logger, gatewayName string) {
+func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gateway.Responder, session agent.SessionRuntime, logger *msglog.Logger, gatewayName string) {
 	defer conn.Close()
 
 	var req daemonSendRequest
@@ -334,6 +337,8 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 	req.FilePath = strings.TrimSpace(req.FilePath)
 	req.Caption = strings.TrimSpace(req.Caption)
 	req.MediaType = strings.TrimSpace(req.MediaType)
+	req.Source = strings.TrimSpace(req.Source)
+	req.LogPath = strings.TrimSpace(req.LogPath)
 	if req.Text == "" && req.FilePath == "" {
 		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: "text or file_path is required"})
 		return
@@ -392,7 +397,61 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 	if logger != nil {
 		logger.UpdateStatus(req.RequestID, msglog.EntryAgentResponse, msglog.StatusSent)
 	}
+	if mirrorErr := maybeMirrorSystemNotice(ctx, session, gatewayName, req); mirrorErr != nil {
+		fmt.Fprintf(os.Stderr, "[%s] mirror system notice failed: %v\n", time.Now().Format(time.RFC3339), mirrorErr)
+	}
 	_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: true})
+}
+
+type cronNoticeNotifier struct {
+	responder gateway.Responder
+	session   agent.SessionRuntime
+	channel   string
+}
+
+func (n cronNoticeNotifier) SendMessage(ctx context.Context, chatID, text string) error {
+	if err := n.responder.SendMessage(ctx, chatID, text); err != nil {
+		return err
+	}
+	req := daemonSendRequest{
+		ChatID:  chatID,
+		Text:    text,
+		Source:  "cron",
+		LogPath: "",
+	}
+	if err := maybeMirrorSystemNotice(ctx, n.session, n.channel, req); err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] mirror cron notice failed: %v\n", time.Now().Format(time.RFC3339), err)
+	}
+	return nil
+}
+
+func maybeMirrorSystemNotice(ctx context.Context, session agent.SessionRuntime, channel string, req daemonSendRequest) error {
+	if req.Source == "" || session == nil {
+		return nil
+	}
+	sender, ok := session.(agent.SystemNoticeSender)
+	if !ok {
+		return nil
+	}
+
+	message := req.Text
+	if req.FilePath != "" {
+		message = req.Caption
+		if message == "" {
+			message = fmt.Sprintf("[media:%s] %s", withDefault(req.MediaType, "auto"), req.FilePath)
+		}
+	}
+	metadata := map[string]string{
+		"source": req.Source,
+	}
+	if req.LogPath != "" {
+		metadata["log_path"] = req.LogPath
+	}
+	if req.FilePath != "" {
+		metadata["file_path"] = req.FilePath
+		metadata["media_type"] = withDefault(req.MediaType, "auto")
+	}
+	return sender.SendSystemNotice(ctx, channel, req.ChatID, req.Source, message, metadata)
 }
 
 func ensureSelfRepo(workspaceDir string) error {

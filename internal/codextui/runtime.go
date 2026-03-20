@@ -129,6 +129,14 @@ func (s *SessionRuntime) SendControlCommand(ctx context.Context, text string) er
 	return tmux.PasteAndEnterFor(ctx, s.sessionName(), text)
 }
 
+func (s *SessionRuntime) SendSystemNotice(ctx context.Context, channel, chatID, source, message string, metadata map[string]string) error {
+	if err := s.EnsureSession(ctx); err != nil {
+		return err
+	}
+	s.markSend()
+	return tmux.PasteAndEnterFor(ctx, s.sessionName(), agent.BuildSystemNoticeEnvelope(channel, chatID, source, message, metadata))
+}
+
 func (s *SessionRuntime) GetContextEstimate(parent context.Context, _ string) (agent.ContextEstimate, error) {
 	if parent == nil {
 		parent = context.Background()

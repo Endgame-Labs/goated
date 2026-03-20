@@ -31,6 +31,8 @@ Example:
   EOF`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		chatID, _ := cmd.Flags().GetString("chat")
+		source, _ := cmd.Flags().GetString("source")
+		logPath, _ := cmd.Flags().GetString("log")
 		if chatID == "" {
 			return fmt.Errorf("--chat is required")
 		}
@@ -60,6 +62,8 @@ Example:
 			RequestID: requestID,
 			ChatID:    chatID,
 			Text:      text,
+			Source:    strings.TrimSpace(source),
+			LogPath:   strings.TrimSpace(logPath),
 		}); err != nil {
 			return fmt.Errorf("send daemon request: %w", err)
 		}

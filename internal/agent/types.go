@@ -124,6 +124,10 @@ type SessionRuntime interface {
 	Version(ctx context.Context) string
 }
 
+type SystemNoticeSender interface {
+	SendSystemNotice(ctx context.Context, channel, chatID, source, message string, metadata map[string]string) error
+}
+
 type HeadlessRequest struct {
 	WorkspaceDir string
 	Prompt       string

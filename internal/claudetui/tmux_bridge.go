@@ -369,6 +369,13 @@ func (b *TmuxBridge) SendControlCommand(ctx context.Context, text string) error 
 	return tmux.PasteAndEnterFor(ctx, b.sessionName(), text)
 }
 
+func (b *TmuxBridge) SendSystemNotice(ctx context.Context, channel, chatID, source, message string, metadata map[string]string) error {
+	if err := b.EnsureSession(ctx); err != nil {
+		return err
+	}
+	return tmux.PasteAndEnterFor(ctx, b.sessionName(), agent.BuildSystemNoticeEnvelope(channel, chatID, source, message, metadata))
+}
+
 func (b *TmuxBridge) DetectRetryableError(ctx context.Context) string {
 	return tmux.CheckPaneForErrorFor(ctx, b.sessionName())
 }
