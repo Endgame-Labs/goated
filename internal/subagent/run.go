@@ -5,14 +5,25 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
+	"goated/internal/agent"
 	"goated/internal/db"
 	"goated/internal/tmux"
 )
 
-const basePreamble = "You are a Goated subagent. Read self/AGENTS.md first for instructions on how to operate in this workspace."
+const basePreamble = `You are a Goated subagent.
+
+Before doing any work in this workspace, read these files in order:
+1. GOATED_CLI_README.md
+2. GOATED.md
+3. self/CLAUDE.md
+4. self/AGENTS.md (if it exists)
+
+Follow the shared Goated runtime contract from GOATED.md plus any private guidance from self/CLAUDE.md and self/AGENTS.md.`
 
 func BuildPreamble(extra string) string {
 	extra = strings.TrimSpace(extra)
@@ -76,7 +87,7 @@ type Result struct {
 
 // handleCompletion records the subagent's final status and notifies the main
 // interactive runtime session. Shared by RunSync and RunBackground.
-func handleCompletion(store *db.Store, runID uint64, runErr error, opts RunOpts) {
+func HandleCompletion(store *db.Store, runID uint64, runErr error, opts RunOpts) {
 	status := "ok"
 	if runErr != nil {
 		status = "error"
@@ -91,8 +102,9 @@ func handleCompletion(store *db.Store, runID uint64, runErr error, opts RunOpts)
 	notifyMainSession(opts, status)
 }
 
-// notifyMainSession pastes a <subagent-notification> into the configured tmux
-// session so the main interactive runtime knows a job finished.
+// notifyMainSession pastes a no-op system notice envelope into the configured
+// tmux session so the main interactive runtime has context about background
+// work without being prompted to reply.
 func notifyMainSession(opts RunOpts, status string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -107,31 +119,41 @@ func notifyMainSession(opts RunOpts, status string) {
 	}
 
 	logTail := readLogTail(opts.LogPath, 1000)
+	message := fmt.Sprintf("Background %s finished with status %s.", opts.Source, status)
+	if logTail != "" {
+		message += "\n\nLog tail:\n" + logTail
+	}
 
-	var attrs []string
-	attrs = append(attrs, fmt.Sprintf("source=%q", opts.Source))
-	attrs = append(attrs, fmt.Sprintf("status=%q", status))
+	metadata := map[string]string{
+		"status": status,
+		"log":    opts.LogPath,
+	}
 	if opts.CronID > 0 {
-		attrs = append(attrs, fmt.Sprintf("cron_id=%q", fmt.Sprint(opts.CronID)))
+		metadata["cron_id"] = fmt.Sprint(opts.CronID)
 	}
 	if opts.ChatID != "" {
-		attrs = append(attrs, fmt.Sprintf("chat_id=%q", opts.ChatID))
+		metadata["chat_id"] = opts.ChatID
 	}
-	attrs = append(attrs, fmt.Sprintf("log=%q", opts.LogPath))
 	if opts.Runtime.Provider != "" {
-		attrs = append(attrs, fmt.Sprintf("runtime_provider=%q", opts.Runtime.Provider))
+		metadata["runtime_provider"] = opts.Runtime.Provider
 	}
 	if opts.Runtime.Mode != "" {
-		attrs = append(attrs, fmt.Sprintf("runtime_mode=%q", opts.Runtime.Mode))
+		metadata["runtime_mode"] = opts.Runtime.Mode
 	}
 	if opts.Runtime.Version != "" {
-		attrs = append(attrs, fmt.Sprintf("runtime_version=%q", opts.Runtime.Version))
+		metadata["runtime_version"] = opts.Runtime.Version
+	}
+	if opts.Source != "" {
+		metadata["source"] = opts.Source
 	}
 
-	notification := fmt.Sprintf("<subagent-notification %s>\n%s\n</subagent-notification>",
-		strings.Join(attrs, " "), logTail)
+	channel := "slack"
+	if opts.ChatID == "" {
+		channel = "internal"
+	}
 
-	_ = tmux.PasteAndEnterFor(ctx, sessionName, notification)
+	notice := agent.BuildSystemNoticeEnvelope(channel, opts.ChatID, opts.Source, message, metadata)
+	_ = tmux.PasteAndEnterFor(ctx, sessionName, notice)
 }
 
 // readLogTail returns the last maxBytes of a log file.
@@ -256,7 +278,7 @@ func RunSyncCommand(ctx context.Context, store *db.Store, cmd *exec.Cmd, opts Ru
 	outFile.Close()
 
 	output, _ := os.ReadFile(opts.LogPath)
-	handleCompletion(store, runID, runErr, opts)
+	HandleCompletion(store, runID, runErr, opts)
 	status := "ok"
 	if runErr != nil {
 		status = "error"
@@ -283,19 +305,90 @@ func RunBackgroundCommand(store *db.Store, cmd *exec.Cmd, opts RunOpts) (Result,
 		}
 	}
 
-	f, err := os.Create(opts.LogPath)
+	if err := os.MkdirAll(filepath.Dir(opts.LogPath), 0o755); err != nil {
+		return Result{}, fmt.Errorf("mkdir log dir: %w", err)
+	}
+	logFile, err := os.OpenFile(opts.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return Result{}, fmt.Errorf("create log file: %w", err)
 	}
-	cmd.Stdout = f
-	cmd.Stderr = f
+	_ = logFile.Close()
 
-	if err := cmd.Start(); err != nil {
-		f.Close()
-		return Result{}, fmt.Errorf("start subagent: %w", err)
+	wrapper, err := os.CreateTemp(filepath.Dir(opts.LogPath), "goat-subagent-*.sh")
+	if err != nil {
+		return Result{}, fmt.Errorf("create wrapper script: %w", err)
 	}
 
-	pid := cmd.Process.Pid
+	helperPath, err := os.Executable()
+	if err != nil {
+		_ = wrapper.Close()
+		return Result{}, fmt.Errorf("resolve helper path: %w", err)
+	}
+
+	invocation := shellJoin(append([]string{cmd.Path}, cmd.Args[1:]...))
+	statusFlag := "ok"
+	if store == nil {
+		statusFlag = "unknown"
+	}
+	finishCmd := []string{
+		shellQuote(helperPath), "subagent-finish",
+		"--status", "$finish_status",
+		"--source", shellQuote(opts.Source),
+		"--log", shellQuote(opts.LogPath),
+		"--session", shellQuote(opts.SessionName),
+	}
+	if store != nil {
+		finishCmd = append(finishCmd, "--db", shellQuote(store.Path()))
+	}
+	if opts.ChatID != "" {
+		finishCmd = append(finishCmd, "--chat", shellQuote(opts.ChatID))
+	}
+	if opts.CronID > 0 {
+		finishCmd = append(finishCmd, "--cron-id", shellQuote(fmt.Sprint(opts.CronID)))
+	}
+	if opts.Runtime.Provider != "" {
+		finishCmd = append(finishCmd, "--runtime-provider", shellQuote(opts.Runtime.Provider))
+	}
+	if opts.Runtime.Mode != "" {
+		finishCmd = append(finishCmd, "--runtime-mode", shellQuote(opts.Runtime.Mode))
+	}
+	if opts.Runtime.Version != "" {
+		finishCmd = append(finishCmd, "--runtime-version", shellQuote(opts.Runtime.Version))
+	}
+
+	script := fmt.Sprintf(`#!/bin/sh
+cd %s || exit 1
+%s >> %s 2>&1
+status=$?
+finish_status=%s
+if [ "$status" -ne 0 ]; then
+  finish_status=error
+fi
+%s >/dev/null 2>&1 || true
+rm -f "$0"
+exit "$status"
+`, shellQuote(cmd.Dir), invocation, shellQuote(opts.LogPath), statusFlag, strings.Join(finishCmd, " "))
+
+	if _, err := wrapper.WriteString(script); err != nil {
+		_ = wrapper.Close()
+		return Result{}, fmt.Errorf("write wrapper script: %w", err)
+	}
+	if err := wrapper.Close(); err != nil {
+		return Result{}, fmt.Errorf("close wrapper script: %w", err)
+	}
+	if err := os.Chmod(wrapper.Name(), 0o700); err != nil {
+		return Result{}, fmt.Errorf("chmod wrapper script: %w", err)
+	}
+
+	wrapped := exec.Command("/bin/sh", wrapper.Name())
+	wrapped.Dir = cmd.Dir
+	wrapped.Env = cmd.Env
+	wrapped.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := wrapped.Start(); err != nil {
+		return Result{}, fmt.Errorf("start subagent wrapper: %w", err)
+	}
+
+	pid := wrapped.Process.Pid
 
 	var runID uint64
 	if store != nil {
@@ -310,11 +403,9 @@ func RunBackgroundCommand(store *db.Store, cmd *exec.Cmd, opts RunOpts) (Result,
 		)
 	}
 
-	go func() {
-		runErr := cmd.Wait()
-		f.Close()
-		handleCompletion(store, runID, runErr, opts)
-	}()
+	if runID > 0 {
+		finishCmd = append(finishCmd, "--run-id", shellQuote(fmt.Sprint(runID)))
+	}
 
 	return Result{
 		PID:             pid,
@@ -323,4 +414,19 @@ func RunBackgroundCommand(store *db.Store, cmd *exec.Cmd, opts RunOpts) (Result,
 		RuntimeMode:     opts.Runtime.Mode,
 		RuntimeVersion:  opts.Runtime.Version,
 	}, nil
+}
+
+func shellJoin(parts []string) string {
+	quoted := make([]string, 0, len(parts))
+	for _, p := range parts {
+		quoted = append(quoted, shellQuote(p))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

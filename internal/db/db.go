@@ -25,6 +25,13 @@ type Store struct {
 	path string
 }
 
+func (s *Store) Path() string {
+	if s == nil {
+		return ""
+	}
+	return s.path
+}
+
 type CronJob struct {
 	ID         uint64 `json:"id"`
 	Type       string `json:"type"` // "subagent" (default) or "system"
