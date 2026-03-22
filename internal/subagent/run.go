@@ -118,42 +118,58 @@ func notifyMainSession(opts RunOpts, status string) {
 		return
 	}
 
-	logTail := readLogTail(opts.LogPath, 1000)
-	message := fmt.Sprintf("Background %s finished with status %s.", opts.Source, status)
-	if logTail != "" {
-		message += "\n\nLog tail:\n" + logTail
-	}
+	logTail := strings.TrimSpace(readLogTail(opts.LogPath, 300))
+	message := buildBackgroundNoticeMessage(opts, status, logTail)
 
-	metadata := map[string]string{
-		"status": status,
-		"log":    opts.LogPath,
-	}
+	metadata := map[string]string{}
 	if opts.CronID > 0 {
 		metadata["cron_id"] = fmt.Sprint(opts.CronID)
 	}
-	if opts.ChatID != "" {
-		metadata["chat_id"] = opts.ChatID
-	}
-	if opts.Runtime.Provider != "" {
-		metadata["runtime_provider"] = opts.Runtime.Provider
-	}
-	if opts.Runtime.Mode != "" {
-		metadata["runtime_mode"] = opts.Runtime.Mode
-	}
-	if opts.Runtime.Version != "" {
-		metadata["runtime_version"] = opts.Runtime.Version
-	}
-	if opts.Source != "" {
-		metadata["source"] = opts.Source
+	if opts.LogPath != "" {
+		metadata["log"] = opts.LogPath
 	}
 
 	channel := "slack"
-	if opts.ChatID == "" {
+	noticeChatID := opts.ChatID
+	if opts.Source == "cron" || opts.ChatID == "" {
 		channel = "internal"
+		noticeChatID = ""
 	}
 
-	notice := agent.BuildSystemNoticeEnvelope(channel, opts.ChatID, opts.Source, message, metadata)
+	notice := agent.BuildSystemNoticeEnvelope(channel, noticeChatID, opts.Source, message, metadata)
 	_ = tmux.PasteAndEnterFor(ctx, sessionName, notice)
+}
+
+func buildBackgroundNoticeMessage(opts RunOpts, status, logTail string) string {
+	label := "Background job"
+	switch {
+	case opts.Source == "cron" && opts.CronID > 0:
+		label = fmt.Sprintf("Cron #%d", opts.CronID)
+	case opts.Source != "":
+		label = "Background " + opts.Source
+	}
+
+	message := fmt.Sprintf("%s: %s.", label, status)
+	if summary := summarizeLogTail(logTail); summary != "" {
+		message += " " + summary
+	}
+	return message
+}
+
+func summarizeLogTail(s string) string {
+	s = strings.TrimSpace(s)
+	switch s {
+	case "", "(log not readable)":
+		return s
+	case "No new emails. Nothing to report.", "No new emails - nothing to report.", "No new emails — nothing to report.":
+		return "No new emails."
+	}
+
+	lines := strings.Split(s, "\n")
+	if len(lines) == 1 && len(lines[0]) <= 120 {
+		return lines[0]
+	}
+	return ""
 }
 
 // readLogTail returns the last maxBytes of a log file.
