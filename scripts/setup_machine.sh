@@ -219,7 +219,6 @@ install_system() {
     cron \
     curl \
     git \
-    sqlite3 \
     tar \
     tmux \
     xz-utils

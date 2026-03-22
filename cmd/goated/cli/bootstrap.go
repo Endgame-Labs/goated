@@ -183,7 +183,7 @@ func runBootstrapPostSetup(repoRoot string) error {
 
 	fmt.Println()
 	fmt.Println("[1/6] Installing system dependencies with scripts/setup_machine.sh install-system")
-	fmt.Println("Reason: bootstrap should leave behind a usable machine baseline, including tools like tmux, crontab, and sqlite3 used by Goated workflows.")
+	fmt.Println("Reason: bootstrap should leave behind a usable machine baseline, including tools like tmux and crontab used by Goated workflows.")
 	systemCmd := exec.Command(filepath.Join(repoRoot, "scripts", "setup_machine.sh"), "install-system")
 	systemCmd.Dir = repoRoot
 	systemCmd.Stdout = os.Stdout
