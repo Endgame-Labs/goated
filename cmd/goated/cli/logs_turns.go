@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,11 +18,11 @@ import (
 )
 
 type conversationMessage struct {
-	TS     string
-	TSUnix int64
+	TS      string
+	TSUnix  int64
 	Speaker string
-	ChatID string
-	Text   string
+	ChatID  string
+	Text    string
 }
 
 type conversationTurn struct {
@@ -36,13 +37,21 @@ var logsTurnsCmd = &cobra.Command{
 		cfg := app.LoadConfig()
 		turnCount, _ := cmd.Flags().GetInt("turns")
 		chatID, _ := cmd.Flags().GetString("chat")
+		days, _ := cmd.Flags().GetInt("days")
+		sinceArg, _ := cmd.Flags().GetString("since")
+		untilArg, _ := cmd.Flags().GetString("until")
 
 		loc, err := time.LoadLocation(cfg.DefaultTimezone)
 		if err != nil {
 			loc = time.Local
 		}
 
-		msgs, err := readConversationMessages(filepath.Join(cfg.LogDir, "message_logs", "daily"), chatID)
+		sinceDate, untilDate, err := resolveDateRange(days, sinceArg, untilArg, loc)
+		if err != nil {
+			return err
+		}
+
+		msgs, err := readConversationMessages(filepath.Join(cfg.LogDir, "message_logs", "daily"), chatID, sinceDate, untilDate)
 		if err != nil {
 			return err
 		}
@@ -79,7 +88,7 @@ var logsTurnsCmd = &cobra.Command{
 	},
 }
 
-func readConversationMessages(dailyDir, chatID string) ([]conversationMessage, error) {
+func readConversationMessages(dailyDir, chatID string, sinceDate, untilDate *time.Time) ([]conversationMessage, error) {
 	entries, err := os.ReadDir(dailyDir)
 	if err != nil {
 		return nil, fmt.Errorf("read daily logs: %w", err)
@@ -92,6 +101,16 @@ func readConversationMessages(dailyDir, chatID string) ([]conversationMessage, e
 	var msgs []conversationMessage
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		fileDate, ok := dailyLogDate(entry.Name())
+		if !ok {
+			continue
+		}
+		if sinceDate != nil && fileDate.Before(*sinceDate) {
+			continue
+		}
+		if untilDate != nil && fileDate.After(*untilDate) {
 			continue
 		}
 		path := filepath.Join(dailyDir, entry.Name())
@@ -110,6 +129,70 @@ func readConversationMessages(dailyDir, chatID string) ([]conversationMessage, e
 	})
 
 	return msgs, nil
+}
+
+func resolveDateRange(days int, sinceArg, untilArg string, loc *time.Location) (*time.Time, *time.Time, error) {
+	if days > 0 && (sinceArg != "" || untilArg != "") {
+		return nil, nil, fmt.Errorf("--days cannot be combined with --since/--until")
+	}
+	if days < 0 {
+		return nil, nil, fmt.Errorf("--days must be >= 0")
+	}
+
+	parseDate := func(label, value string) (*time.Time, error) {
+		if value == "" {
+			return nil, nil
+		}
+		t, err := time.ParseInLocation(time.DateOnly, value, loc)
+		if err != nil {
+			return nil, fmt.Errorf("invalid %s date %q, expected YYYY-MM-DD", label, value)
+		}
+		return &t, nil
+	}
+
+	if days > 0 {
+		now := time.Now().In(loc)
+		until := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+		since := until.AddDate(0, 0, -(days - 1))
+		return &since, &until, nil
+	}
+
+	sinceDate, err := parseDate("since", sinceArg)
+	if err != nil {
+		return nil, nil, err
+	}
+	untilDate, err := parseDate("until", untilArg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sinceDate != nil && untilDate != nil && sinceDate.After(*untilDate) {
+		return nil, nil, fmt.Errorf("--since must be on or before --until")
+	}
+	return sinceDate, untilDate, nil
+}
+
+func dailyLogDate(name string) (time.Time, bool) {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	if len(base) != len("2006-01-02") {
+		return time.Time{}, false
+	}
+	parts := strings.Split(base, "-")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	year, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return time.Time{}, false
+	}
+	month, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	day, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC), true
 }
 
 func readConversationMessagesFromFile(path, chatID string) ([]conversationMessage, error) {
@@ -196,5 +279,8 @@ func renderConversationMessage(msg conversationMessage, loc *time.Location) {
 func init() {
 	logsTurnsCmd.Flags().IntP("turns", "n", 10, "number of turns to render")
 	logsTurnsCmd.Flags().String("chat", "", "filter by chat ID")
+	logsTurnsCmd.Flags().Int("days", 0, "only include turns from the last N calendar days (inclusive, in default timezone)")
+	logsTurnsCmd.Flags().String("since", "", "only include turns on or after YYYY-MM-DD")
+	logsTurnsCmd.Flags().String("until", "", "only include turns on or before YYYY-MM-DD")
 	logsCmd.AddCommand(logsTurnsCmd)
 }

@@ -358,7 +358,15 @@ Logs to `logs/watchdog.log`.
 ./goated logs restarts           # recent restart history
 ./goated logs cron               # recent cron run log
 ./goated logs watchdog           # watchdog log
+./goated logs turns -n 20        # last 20 user/assistant turns from gateway message logs
+./goated logs turns --days 5     # turns from the last 5 calendar days (inclusive)
+./goated logs turns --since 2026-03-25 --until 2026-03-29
+                                 # turns within an explicit date range
+./goated logs turns --chat D123 --days 3
+                                 # recent turns for a single chat only
 ```
+
+`logs turns` reads from `logs/message_logs/daily` and supports `--chat`, `--days`, `--since`, and `--until`. `--days` uses the configured `default_timezone` and cannot be combined with `--since`/`--until`.
 
 All subcommands support `-n` to control line count. `logs` and `logs raw` also support `-f` for live tailing. Output goes to stdout, so you can pipe to `grep`, `jq`, etc.
 
