@@ -1,5 +1,9 @@
 # Performance Comparison: Goated vs OpenClaw
 
+Most agent frameworks own the context window — they inject bootstrap files, manage session history, and accumulate state in-process until memory explodes. Goated doesn't touch the context window at all. It's a ~20 MB daemon that pastes message envelopes into tmux and lets Claude Code handle its own context compaction, memory, and token budgeting. The result: no token bloat, no session file growth, no multi-GB memory leaks. Just a thin orchestrator that stays out of the way.
+
+The tables below compare Goated against OpenClaw (a popular self-hosted agent framework) across token usage, storage, memory, and architecture.
+
 ## Token Usage
 
 | | OpenClaw | Goated |
