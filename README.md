@@ -6,7 +6,7 @@
 
 Goated is an always-on personal AI assistant, built around Claude Code and Codex. It's minimal, performant, and piggybacks on the best harnesses in the world for long-running sessions.
 
-**Why Goated?** Most agent frameworks own the context window — they inject bootstrap files, manage session history, and accumulate state in-process until memory explodes. Goated doesn't touch the context window at all. It's a ~20 MB daemon that pastes message envelopes into tmux and lets Claude Code handle its own context compaction, memory, and token budgeting. The result: no token bloat, no session file growth, no multi-GB memory leaks. Just a thin orchestrator that stays out of the way. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for the full comparison.
+**Why Goated vs. OpenClaw?**  Well, besides the fact that many (most?) OpenClaw users are violating Claude Code's TOS by hijacking their Max credentials: Goated is also simply faster and better.  Most agent frameworks own the context window — they inject bootstrap files, manage session history, and accumulate state in-process until memory explodes. Goated doesn't touch the context window at all. It's a ~20 MB daemon that pastes message envelopes into tmux and lets Claude Code (or Codex) handle its own context compaction, memory, and token budgeting. The result: no token bloat, no session file growth, no multi-GB memory leaks. Just a thin golang orchestrator that stays out of the way. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for the full comparison.
 
 Out of the box, Goated supports:
 
