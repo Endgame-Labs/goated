@@ -28,6 +28,8 @@ Out of the box, Goated supports:
 
 ## Quickstart
 
+Goated works best on Linux, in a VM, a dedicated box, or a VPS.  The maintainer recommends a DigitalOcean droplet or EC2 Instance with 4GB memory.
+
 1. Clone the repo:
 
 ```sh
