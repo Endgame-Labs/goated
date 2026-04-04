@@ -40,7 +40,8 @@ type StopEvent struct {
 
 // hooksConfig is the structure written to workspace/.claude/settings.local.json.
 type hooksConfig struct {
-	Hooks map[string][]hookMatcher `json:"hooks"`
+	Hooks          map[string][]hookMatcher `json:"hooks"`
+	EnabledPlugins map[string]bool          `json:"enabledPlugins,omitempty"`
 }
 
 type hookMatcher struct {
@@ -98,7 +99,14 @@ func writeHooksConfig(workspaceDir, hookDir, credsDir string) error {
 		}
 	}
 
-	cfg := hooksConfig{Hooks: hooks}
+	// Disable plugins that conflict with goated's own gateway integrations.
+	// The Anthropic Telegram plugin clashes with goated's Telegram gateway,
+	// causing the agent to reply via the plugin instead of ./goat send_user_message.
+	disabledPlugins := map[string]bool{
+		"telegram@claude-plugins-official": false,
+	}
+
+	cfg := hooksConfig{Hooks: hooks, EnabledPlugins: disabledPlugins}
 
 	// Use json.Encoder with SetEscapeHTML(false) to avoid encoding > as \u003e
 	// which Claude Code doesn't handle correctly in hook commands.
