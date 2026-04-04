@@ -18,4 +18,9 @@ func TestDerivedSessionNamesUseWorkspacePath(t *testing.T) {
 	if !strings.HasPrefix(got, "goat_codex_tui_workspace_") {
 		t.Fatalf("CodexTUI(%q) = %q", "/tmp/My Repo/workspace", got)
 	}
+
+	headless := Codex("/tmp/My Repo/workspace")
+	if !strings.HasPrefix(headless, "goat_codex_workspace_") {
+		t.Fatalf("Codex(%q) = %q", "/tmp/My Repo/workspace", headless)
+	}
 }

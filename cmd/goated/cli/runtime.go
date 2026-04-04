@@ -76,13 +76,23 @@ var runtimeStatusCmd = &cobra.Command{
 			fmt.Printf("Session state: %s (%s)\n", state.Kind, state.Summary)
 		}
 
-		// Show claude (headless) runtime status
-		claudeMarker := "inactive"
-		if runtime.Descriptor().Provider == agent.RuntimeClaude {
-			claudeMarker = "active"
-		}
 		fmt.Printf("\nRuntimes:\n")
-		fmt.Printf("  %-16s mode=%-12s (%s)\n", "Claude Code", "headless", claudeMarker)
+		for _, desc := range []agent.RuntimeDescriptor{
+			{
+				Provider:    agent.RuntimeClaude,
+				DisplayName: "Claude Code",
+			},
+			{
+				Provider:    agent.RuntimeCodex,
+				DisplayName: "Codex",
+			},
+		} {
+			marker := "inactive"
+			if desc.Provider == runtime.Descriptor().Provider {
+				marker = "active"
+			}
+			fmt.Printf("  %-16s mode=%-12s (%s)\n", desc.DisplayName, "headless", marker)
+		}
 
 		fmt.Println("\nTmux sessions:")
 		for _, desc := range []agent.RuntimeDescriptor{
@@ -109,13 +119,13 @@ var runtimeStatusCmd = &cobra.Command{
 }
 
 var runtimeSwitchCmd = &cobra.Command{
-	Use:   "switch <claude|claude_tui|codex_tui>",
+	Use:   "switch <claude|codex|claude_tui|codex_tui>",
 	Short: "Switch the configured agent runtime",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		target := args[0]
-		if target != string(agent.RuntimeClaude) && target != string(agent.RuntimeClaudeTUI) && target != string(agent.RuntimeCodexTUI) {
-			return fmt.Errorf("runtime must be claude, claude_tui, or codex_tui")
+		if target != string(agent.RuntimeClaude) && target != string(agent.RuntimeCodex) && target != string(agent.RuntimeClaudeTUI) && target != string(agent.RuntimeCodexTUI) {
+			return fmt.Errorf("runtime must be claude, codex, claude_tui, or codex_tui")
 		}
 
 		configPath := "goated.json"
@@ -166,6 +176,8 @@ func sessionNameForRuntime(runtime string, workspaceDir string) string {
 	switch runtime {
 	case string(agent.RuntimeClaude):
 		return "goat_claude_main"
+	case string(agent.RuntimeCodex):
+		return sessionname.Codex(workspaceDir)
 	case string(agent.RuntimeCodexTUI):
 		return sessionname.CodexTUI(workspaceDir)
 	default:

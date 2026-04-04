@@ -4,7 +4,17 @@
 
 # goated
 
-A self-healing bridge between Slack/Telegram and an interactive agent runtime. Goated supports Claude Code and Codex, with the same chat surface, cron jobs, subagents, credential management, and daemon lifecycle.
+Goated is an always-on personal AI assistant, built around the Claude Code and Codex harnesses. It's minimal, performant, and piggybacks on the best harnesses in the world for long-running sessions.
+
+Out of the box, Goated supports:
+
+- Slack and Telegram chat interfaces
+- Claude Code and Codex in both headless and TUI modes
+- Long-running daemon operation with watchdog recovery
+- Cron jobs and headless subagents
+- File-backed credential management
+- Session health checks, restart handling, and queueing
+- A seeded private `workspace/self` repo with bundled note-taking tools and an extensible Cobra-based personal CLI
 
 > **For AI agents working on this codebase:** see [CODEBASE.md](CODEBASE.md) for architecture and [AGENTS.md](AGENTS.md) for build/run instructions.
 
@@ -97,14 +107,14 @@ Both the **cron runner** and the **active runtime session** can spawn subagents.
 
 **Key design choice:** the runtime sends its own replies. The gateway doesn't scrape output from tmux — instead, the runtime is instructed through the workspace contract to pipe its response through the `goat` CLI. This makes the system stateless on the response path and avoids fragile scrollback parsing.
 
-**Subagents and cron jobs** run as headless runtime processes (not in the tmux session). All Claude-backed runtimes use `claude -p`; `codex_tui` uses `codex exec`. Each gets its own process, tracked in bbolt with PID and status. The cron runner skips a job if its previous run is still in-flight, preventing pile-ups from long-running tasks.
+**Headless runtimes** use process-per-message execution: `claude` uses `claude -p --resume`, and `codex` uses `codex exec` with `codex exec resume` for follow-up turns. **TUI runtimes** (`claude_tui`, `codex_tui`) run inside tmux. Subagents and cron jobs always run headlessly. Each run is tracked in bbolt with PID and status. The cron runner skips a job if its previous run is still in-flight, preventing pile-ups from long-running tasks.
 
 ### Folder structure
 
 ```
 goated/
 ├── main.go                     # Entry point (builds ./goated)
-├── build.sh                    # Builds all three binaries
+├── build.sh                    # Builds both binaries
 ├── goated.json                 # Config (gitignored)
 ├── goated.db                   # bbolt database (gitignored)
 │
@@ -213,7 +223,7 @@ to your identity, memory, and project files regularly.
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - One runtime CLI installed and authenticated:
   - Claude Code (`claude`) — used by both `claude` and `claude_tui` runtimes
-  - Codex (`codex`)
+  - Codex (`codex`) — used by both `codex` and `codex_tui` runtimes
 
 ### Machine bootstrap
 
@@ -264,7 +274,7 @@ Settings (`goated.json`):
 | Key                              | Default               | Description                                       |
 | -------------------------------- | --------------------- | ------------------------------------------------- |
 | `gateway`                        | `telegram`            | `slack` or `telegram`                             |
-| `agent_runtime`                  | `claude`              | `claude`, `claude_tui`, or `codex_tui`            |
+| `agent_runtime`                  | `claude`              | `claude`, `codex`, `claude_tui`, or `codex_tui`   |
 | `default_timezone`               | `America/Los_Angeles` | Timezone for cron schedules                       |
 | `workspace_dir`                  | `workspace`           | Agent working directory                           |
 | `db_path`                        | `./goated.db`         | Path to bbolt database                            |
@@ -320,9 +330,10 @@ The active runtime sends replies directly via `./goat send_user_message --chat <
 
 ```sh
 ./goated runtime status
-./goated runtime switch claude          # headless (default, no tmux)
-./goated runtime switch claude_tui      # TUI mode (tmux-based)
-./goated runtime switch codex_tui
+./goated runtime switch claude          # headless Claude Code
+./goated runtime switch codex           # headless Codex
+./goated runtime switch claude_tui      # Claude Code in tmux
+./goated runtime switch codex_tui       # Codex in tmux
 ./goated runtime cleanup
 ```
 
@@ -427,3 +438,11 @@ See [docs/OPENCLAW_MIGRATION.md](docs/OPENCLAW_MIGRATION.md) for credential migr
 ## License
 
 MIT License. Copyright (c) 2025-2026 Kyle Wild and Endgame Labs, Inc. See [LICENSE](LICENSE) for details.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for private vulnerability reporting guidance.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build and PR expectations.

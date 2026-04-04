@@ -17,7 +17,7 @@ func Validate(ctx context.Context, rt agent.Runtime, workspaceDir string) error 
 		if _, err := exec.LookPath("claude"); err != nil {
 			return fmt.Errorf("claude binary not found on PATH: %w", err)
 		}
-	case agent.RuntimeCodexTUI:
+	case agent.RuntimeCodex, agent.RuntimeCodexTUI:
 		if _, err := exec.LookPath("codex"); err != nil {
 			return fmt.Errorf("codex binary not found on PATH: %w", err)
 		}

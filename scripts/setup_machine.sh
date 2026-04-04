@@ -164,7 +164,7 @@ doctor() {
     echo "Configured runtime requires Claude Code, but 'claude' is not on PATH."
     failures=1
   fi
-  if [[ "$CONFIGURED_RUNTIME" == "codex" ]] && ! have codex; then
+  if [[ "$CONFIGURED_RUNTIME" == "codex" || "$CONFIGURED_RUNTIME" == "codex_tui" ]] && ! have codex; then
     echo
     echo "Configured runtime requires Codex, but 'codex' is not on PATH."
     failures=1
@@ -190,7 +190,7 @@ doctor() {
     echo "- Install and authenticate Claude Code if you want GOAT_AGENT_RUNTIME=claude"
   fi
   if ! have codex; then
-    echo "- Install and authenticate Codex if you want GOAT_AGENT_RUNTIME=codex"
+    echo "- Install and authenticate Codex if you want GOAT_AGENT_RUNTIME=codex or codex_tui"
   fi
 
   if [[ "$failures" -ne 0 ]]; then

@@ -7,6 +7,7 @@ import (
 	"goated/internal/app"
 	"goated/internal/claude"
 	"goated/internal/claudetui"
+	"goated/internal/codex"
 	"goated/internal/codextui"
 )
 
@@ -46,6 +47,14 @@ func New(cfg app.Config) (agent.Runtime, error) {
 			headless:   headless,
 			descriptor: session.Descriptor(),
 		}, nil
+	case agent.RuntimeCodex:
+		session := codex.NewSessionRuntime(cfg.WorkspaceDir, cfg.LogDir)
+		headless := codex.NewHeadlessRuntime(cfg.WorkspaceDir)
+		return &runtimeImpl{
+			session:    session,
+			headless:   headless,
+			descriptor: session.Descriptor(),
+		}, nil
 	case agent.RuntimeCodexTUI:
 		session := codextui.NewSessionRuntime(cfg.WorkspaceDir, cfg.LogDir)
 		headless := codextui.NewHeadlessRuntime(cfg.WorkspaceDir)
@@ -55,6 +64,6 @@ func New(cfg app.Config) (agent.Runtime, error) {
 			descriptor: session.Descriptor(),
 		}, nil
 	default:
-		return nil, fmt.Errorf("unsupported GOAT_AGENT_RUNTIME %q (use claude, claude_tui, or codex_tui)", cfg.AgentRuntime)
+		return nil, fmt.Errorf("unsupported GOAT_AGENT_RUNTIME %q (use claude, codex, claude_tui, or codex_tui)", cfg.AgentRuntime)
 	}
 }

@@ -5,12 +5,12 @@
 ```
 .                        # Go module root
 ├── cmd/
-│   ├── goated/          # Agent CLI (./workspace/goat)
-│   └── goated/          # CLI + daemon (./goated, ./workspace/goat)
+│   └── goated/          # Shared CLI + daemon (./goated, ./workspace/goat)
 ├── internal/
 │   ├── app/             # Config (Viper/goated.json + creds)
 │   ├── agent/           # Provider-neutral runtime contracts
 │   ├── claude/          # Claude headless runtime (claude -p --resume, hooks-based)
+│   ├── codex/           # Codex headless runtime (codex exec / exec resume)
 │   ├── claudetui/       # Claude TUI runtime implementations (tmux-based)
 │   ├── codextui/        # Codex TUI runtime implementations (tmux-based)
 │   ├── cron/            # Cron runner
@@ -27,7 +27,7 @@
 │   ├── CLAUDE.md        # Claude compatibility shim
 │   ├── TOOLS.md         # Guide for building CLI tools
 │   └── self/            # Private agent data (gitignored)
-├── build.sh             # Builds all three binaries
+├── build.sh             # Builds both binaries
 ├── build_all_and_run_daemon.sh  # Builds + starts daemon
 └── main.go              # Alias entrypoint (same as cmd/goated)
 ```
@@ -75,7 +75,7 @@ Both are statically-compiled Go. The daemon uses ~14 MB RSS. The `goat` CLI is e
 
 **Key design choice:** the runtime sends its own replies. The gateway doesn't scrape output from tmux — the runtime is instructed to pipe its response through the `goat` CLI.
 
-**Subagents and cron jobs** run as headless runtime processes (not in the tmux session). All Claude-backed runtimes (`claude` and `claude_tui`) use `claude -p`; `codex_tui` uses `codex exec`. Each gets its own process, tracked in BoltDB with PID and status.
+**Headless runtimes** use process-per-message execution: `claude` uses `claude -p --resume`, and `codex` uses `codex exec` with `codex exec resume` for follow-up turns. **TUI runtimes** (`claude_tui`, `codex_tui`) run inside tmux. Subagents and cron jobs always run headlessly. Each run is tracked in BoltDB with PID and status.
 
 ## Gateway features
 
@@ -101,7 +101,7 @@ Settings live in `goated.json` (Viper-managed). Secrets live in `workspace/creds
 | Key | Default | Description |
 |-----|---------|-------------|
 | `gateway` | `telegram` | `slack` or `telegram` |
-| `agent_runtime` | `claude` | `claude`, `claude_tui`, or `codex_tui` |
+| `agent_runtime` | `claude` | `claude`, `codex`, `claude_tui`, or `codex_tui` |
 | `default_timezone` | `America/Los_Angeles` | Timezone for cron schedules |
 | `workspace_dir` | `workspace` | Agent working directory |
 | `db_path` | `./goated.db` | BoltDB path |

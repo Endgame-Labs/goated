@@ -11,6 +11,10 @@ func ClaudeTUI(workspaceDir string) string {
 	return derive("goat_claude_tui", workspaceDir)
 }
 
+func Codex(workspaceDir string) string {
+	return derive("goat_codex", workspaceDir)
+}
+
 func CodexTUI(workspaceDir string) string {
 	return derive("goat_codex_tui", workspaceDir)
 }

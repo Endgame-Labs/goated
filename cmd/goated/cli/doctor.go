@@ -97,7 +97,7 @@ func checkConfigFile() checkResult {
 
 func checkRuntimeValue(runtime string) checkResult {
 	switch agent.RuntimeProvider(runtime) {
-	case "", agent.RuntimeClaude, agent.RuntimeClaudeTUI, agent.RuntimeCodexTUI:
+	case "", agent.RuntimeClaude, agent.RuntimeCodex, agent.RuntimeClaudeTUI, agent.RuntimeCodexTUI:
 		display := runtime
 		if display == "" {
 			display = "(empty, defaults to claude)"
@@ -112,7 +112,7 @@ func checkRuntimeValue(runtime string) checkResult {
 			Name:    "agent_runtime",
 			OK:      false,
 			Detail:  fmt.Sprintf("unknown value %q", runtime),
-			FixHint: "Valid values: claude, claude_tui, codex_tui. Update goated.json or run: ./goated bootstrap",
+			FixHint: "Valid values: claude, codex, claude_tui, codex_tui. Update goated.json or run: ./goated bootstrap",
 		}
 	}
 }
@@ -122,7 +122,7 @@ func checkRuntimeBinary(runtime string) checkResult {
 	switch agent.RuntimeProvider(runtime) {
 	case "", agent.RuntimeClaude, agent.RuntimeClaudeTUI:
 		binary = "claude"
-	case agent.RuntimeCodexTUI:
+	case agent.RuntimeCodex, agent.RuntimeCodexTUI:
 		binary = "codex"
 	default:
 		return checkResult{

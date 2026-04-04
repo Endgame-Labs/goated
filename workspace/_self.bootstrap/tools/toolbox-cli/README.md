@@ -140,7 +140,7 @@ without rewriting that CLI in Cobra.
 
 ## Build both CLIs
 
-From `_self.example/`:
+From `_self.bootstrap/`:
 
 ```bash
 ./build_clis.sh

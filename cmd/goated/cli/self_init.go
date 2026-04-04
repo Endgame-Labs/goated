@@ -38,7 +38,7 @@ func ensureSeededSelfRepoWithOptions(workspaceDir string, out io.Writer, announc
 		return fmt.Errorf("stat %s: %w", selfDir, err)
 	}
 
-	templateDir := filepath.Join(workspaceDir, "_self.example")
+	templateDir := filepath.Join(workspaceDir, "_self.bootstrap")
 	templateInfo, err := os.Stat(templateDir)
 	if err != nil {
 		if os.IsNotExist(err) {
