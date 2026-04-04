@@ -7,12 +7,63 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
 const defaultSession = "goat_claude_main"
 
+// targetCache stores resolved session:window.pane targets so we only shell out
+// to `tmux list-panes` once per session instead of on every operation.
+var (
+	targetCache   = make(map[string]string)
+	targetCacheMu sync.RWMutex
+)
+
+// TargetForSession returns the tmux target string (session:window.pane) for the
+// first pane of the given session, respecting base-index settings.
+func TargetForSession(session string) string {
+	return targetForSession(session)
+}
+
+// InvalidateTargetCache removes the cached target for a session, forcing the
+// next targetForSession call to re-query tmux. Call this after creating or
+// recreating a session.
+func InvalidateTargetCache(session string) {
+	targetCacheMu.Lock()
+	delete(targetCache, session)
+	targetCacheMu.Unlock()
+}
+
+// targetForSession resolves the tmux target for a session, auto-detecting
+// window/pane indices to handle non-default base-index configs (e.g. base-index 1).
 func targetForSession(session string) string {
+	targetCacheMu.RLock()
+	if cached, ok := targetCache[session]; ok {
+		targetCacheMu.RUnlock()
+		return cached
+	}
+	targetCacheMu.RUnlock()
+
+	// Query tmux for the actual first window and pane indices.
+	// This respects base-index / pane-base-index settings (e.g. 1-based).
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := runOutput(ctx, "list-panes", "-t", session, "-F", "#{window_index}.#{pane_index}")
+	if err == nil {
+		line := strings.TrimSpace(out)
+		if first, _, ok := strings.Cut(line, "\n"); ok {
+			line = first
+		}
+		if line != "" {
+			target := session + ":" + line
+			targetCacheMu.Lock()
+			targetCache[session] = target
+			targetCacheMu.Unlock()
+			return target
+		}
+	}
+	// Fallback if session doesn't exist yet — don't cache this
 	return session + ":0.0"
 }
 

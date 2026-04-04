@@ -73,6 +73,7 @@ func (s *SessionRuntime) EnsureSession(ctx context.Context) error {
 		if err := tmux.Run(ctx, "new-session", "-d", "-s", session, cmd); err != nil {
 			return fmt.Errorf("start codex tmux session: %w", err)
 		}
+		tmux.InvalidateTargetCache(session)
 	}
 	return s.waitForReady(ctx, 25*time.Second)
 }

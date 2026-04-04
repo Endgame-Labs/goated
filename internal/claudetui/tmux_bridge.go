@@ -184,11 +184,13 @@ func (b *TmuxBridge) startSession(ctx context.Context, session, sessionID string
 	if err := tmux.Run(ctx, "new-session", "-d", "-s", session, cmd); err != nil {
 		return fmt.Errorf("start claude tmux session: %w", err)
 	}
+	tmux.InvalidateTargetCache(session)
 	return nil
 }
 
 func (b *TmuxBridge) restartFreshSession(ctx context.Context, session string) error {
 	_ = tmux.Run(ctx, "kill-session", "-t", session)
+	tmux.InvalidateTargetCache(session)
 	sessionID := newSessionID()
 	if err := b.writeSessionID(sessionID); err != nil {
 		return fmt.Errorf("save session ID: %w", err)
@@ -465,7 +467,7 @@ func waitForClaudeReadyFor(ctx context.Context, session string, timeout time.Dur
 		out, err := tmux.CapturePaneFor(ctx, session)
 		if err == nil {
 			if !acceptedWorkspaceTrust && isWorkspaceTrustPrompt(out) {
-				if err := tmux.Run(ctx, "send-keys", "-t", session+":0.0", "Enter"); err != nil {
+				if err := tmux.Run(ctx, "send-keys", "-t", tmux.TargetForSession(session), "Enter"); err != nil {
 					return fmt.Errorf("confirm Claude workspace trust prompt: %w", err)
 				}
 				acceptedWorkspaceTrust = true
