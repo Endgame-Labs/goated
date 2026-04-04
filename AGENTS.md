@@ -1,7 +1,7 @@
 # AGENTS.md — Developer guide for AI agents
 
 For codebase architecture, project structure, and how the system works, see [CODEBASE.md](CODEBASE.md).
-For agent runtime instructions (responding to users, memory, identity), see [workspace/AGENTS.md](workspace/CLAUDE.md).
+For agent runtime instructions (responding to users, memory, identity), see [workspace/AGENTS.md](workspace/AGENTS.md).
 
 ## Building
 
