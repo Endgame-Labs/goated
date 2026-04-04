@@ -62,11 +62,11 @@ git push -u origin main
 | ----------- | ----- | ------------------------------------------------------------------- |
 | `goated`    | 11 MB | Control-plane CLI + daemon (`daemon run`, `start`, cron, bootstrap) |
 | `goat`      | 11 MB | Agent-facing CLI (send_user_message, creds, cron, spawn-subagent)   |
-| `goated.db` | 64 KB | bbolt embedded database (crons, subagent runs, metadata)            |
+| `goated.db` | 10-20 MB | bbolt embedded database (crons, subagent runs, metadata)            |
 
 Both binaries are statically-compiled Go with no runtime dependencies.
 
-**Memory at runtime:** the daemon uses ~14 MB RSS. Subagents are separate runtime CLI processes. The goat CLI is exec'd per-call and exits immediately, so it adds no persistent memory cost.
+**Memory at runtime:** the daemon uses ~15-20 MB RSS. Subagents are separate runtime CLI processes. The goat CLI is exec'd per-call and exits immediately, so it adds no persistent memory cost.
 
 For a detailed comparison of token usage, file sizes, and memory overhead vs. OpenClaw, see [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 

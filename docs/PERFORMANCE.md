@@ -16,7 +16,7 @@
 | | OpenClaw | Goated |
 |---|---|---|
 | **Session files** | `.jsonl` files that grow unbounded as tool outputs accumulate | No session files -- tmux scrollback is ephemeral |
-| **Database** | Not applicable (state in session files) | bbolt `goated.db`, ~32-64 KB |
+| **Database** | Not applicable (state in session files) | bbolt `goated.db`, ~10-20 MB after sustained use |
 | **Logs** | Embedded in session state | Separate append-only files (`runs.jsonl`, per-job logs) |
 | **Agent context files** | Force-injected up to 150K chars | Committed to `workspace/`, loaded by Claude Code on its own terms |
 
@@ -26,7 +26,7 @@
 
 | | OpenClaw | Goated |
 |---|---|---|
-| **Daemon RSS** | 1.9 GB after 13h; 28 GB by day 3 (self-hosted) | **~14 MB** steady state |
+| **Daemon RSS** | 1.9 GB after 13h; 28 GB by day 3 (self-hosted) | **~15-20 MB** steady state |
 | **Memory growth** | Linear/unbounded -- session state never GC'd | Flat -- open-per-op DB pattern, no held state |
 | **CPU** | 69.9% after 13h (gateway process) | Negligible (poll tmux every 2s, run cron every 1m) |
 | **Recovery** | Manual restart or OOM-kill | Auto-restart on health check failure; graceful drain |
@@ -35,7 +35,7 @@
 
 ## Claude Code Process (the elephant in the room)
 
-Goated's daemon is ~14 MB, but the `goat_main` tmux session runs a persistent Claude Code process that is subject to its own memory issues.
+Goated's daemon is ~15-20 MB, but the `goat_main` tmux session runs a persistent Claude Code process that is subject to its own memory issues.
 
 ### Claude Code Memory Profile
 
@@ -53,7 +53,7 @@ Anthropic has been actively patching these -- recent changelogs mention fixes fo
 
 The auto-restart health checks in `tmux_bridge.go` are a critical safety valve here -- if Claude Code bloats or crashes, goated detects it and restarts the session.
 
-**Real steady-state profile**: ~14 MB (goated) + 500 MB to multi-GB (Claude Code, version-dependent).
+**Real steady-state profile**: ~15-20 MB (goated) + 500 MB to multi-GB (Claude Code, version-dependent).
 
 ## Architecture Philosophy
 
@@ -67,7 +67,7 @@ The auto-restart health checks in `tmux_bridge.go` are a critical safety valve h
 
 ## Bottom Line
 
-Goated sidesteps the entire class of problems that plague OpenClaw's steady state by **not owning the context window**. OpenClaw's token bloat, session file growth, and memory leaks all stem from it managing the full LLM context pipeline in-process. Goated is a ~14 MB message router that pastes prompts into tmux and lets Claude Code handle its own context compaction, memory, and token budgeting.
+Goated sidesteps the entire class of problems that plague OpenClaw's steady state by **not owning the context window**. OpenClaw's token bloat, session file growth, and memory leaks all stem from it managing the full LLM context pipeline in-process. Goated is a ~15-20 MB message router that pastes prompts into tmux and lets Claude Code handle its own context compaction, memory, and token budgeting.
 
 ## Sources
 
