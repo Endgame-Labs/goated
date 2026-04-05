@@ -8,8 +8,6 @@ Goated is an always-on personal AI assistant, built around Claude Code and Codex
 
 Written in golang, with cobra + viper + bbolt + tmux + crontab.
 
-`pi` runtime support is in development and not thoroughly tested yet.
-
 **Why Goated vs. OpenClaw?**
 
 Well, besides the fact that many (most?) OpenClaw users are violating Claude Code's TOS by hijacking their Max credentials: Goated is also simply faster, smaller, and _much_ more performant.
@@ -122,8 +120,6 @@ Both the **cron runner** and the **active runtime session** can spawn subagents.
 **Key design choice:** the runtime sends its own replies. The gateway doesn't scrape output from tmux — instead, the runtime is instructed through the workspace contract to pipe its response through the `goat` CLI. This makes the system stateless on the response path and avoids fragile scrollback parsing.
 
 **Headless runtimes** use process-per-message execution: `claude` uses `claude -p --resume`, `codex` uses `codex exec` with `codex exec resume` for follow-up turns, and `pi` uses Pi's headless JSON/session modes. **TUI runtimes** (`claude_tui`, `codex_tui`) run inside tmux. Subagents and cron jobs always run headlessly. Each run is tracked in bbolt with PID and status. The cron runner skips a job if its previous run is still in-flight, preventing pile-ups from long-running tasks.
-
-`pi` support is in development and has not been thoroughly tested yet.
 
 ### Folder structure
 
