@@ -32,7 +32,7 @@ var bootstrapCmd = &cobra.Command{
 
 		// Prompt for common settings
 		tz := prompt(reader, "Default timezone", withDefault(strFromMap(existing, "default_timezone"), "America/Los_Angeles"))
-		runtime := prompt(reader, "Agent runtime (claude/codex/pi/claude_tui/codex_tui)", withDefault(strFromMap(existing, "agent_runtime"), "claude"))
+		runtime := prompt(reader, "Agent runtime (claude/codex/pi/claude_tui/codex_tui)", withDefault(strFromMap(existing, "agent_runtime"), "claude_tui"))
 		if runtime != "claude" && runtime != "codex" && runtime != "pi" && runtime != "claude_tui" && runtime != "codex_tui" {
 			return fmt.Errorf("agent runtime must be claude, codex, pi, claude_tui, or codex_tui")
 		}
