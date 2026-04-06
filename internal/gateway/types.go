@@ -35,6 +35,12 @@ type ThreadedResponder interface {
 	SendThreadMessage(ctx context.Context, chatID, threadTS, text string) error
 }
 
+// TSResponder extends Responder to return the platform message timestamp.
+type TSResponder interface {
+	SendMessageTS(ctx context.Context, chatID, text string) (string, error)
+	SendThreadMessageTS(ctx context.Context, chatID, threadTS, text string) (string, error)
+}
+
 type MediaResponder interface {
 	SendMedia(ctx context.Context, chatID, filePath, caption, mediaType string) error
 }

@@ -302,8 +302,9 @@ type daemonSendRequest struct {
 }
 
 type daemonSendResponse struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
+	OK        bool   `json:"ok"`
+	Error     string `json:"error,omitempty"`
+	MessageTS string `json:"message_ts,omitempty"`
 }
 
 func runDaemonSocket(ctx context.Context, socketPath string, responder gateway.Responder, session agent.SessionRuntime, logger *msglog.Logger, gatewayName string) {
@@ -379,6 +380,7 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 	}
 
 	var sendErr error
+	var messageTS string
 	if req.FilePath != "" {
 		mediaResponder, ok := responder.(gateway.MediaResponder)
 		if !ok {
@@ -387,14 +389,19 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 			sendErr = mediaResponder.SendMedia(ctx, req.ChatID, req.FilePath, req.Caption, req.MediaType)
 		}
 	} else if req.ThreadTS != "" {
-		threadedResponder, ok := responder.(gateway.ThreadedResponder)
-		if !ok {
-			sendErr = fmt.Errorf("gateway %s does not support threaded messages", gatewayName)
-		} else {
+		if tsResponder, ok := responder.(gateway.TSResponder); ok {
+			messageTS, sendErr = tsResponder.SendThreadMessageTS(ctx, req.ChatID, req.ThreadTS, req.Text)
+		} else if threadedResponder, ok := responder.(gateway.ThreadedResponder); ok {
 			sendErr = threadedResponder.SendThreadMessage(ctx, req.ChatID, req.ThreadTS, req.Text)
+		} else {
+			sendErr = fmt.Errorf("gateway %s does not support threaded messages", gatewayName)
 		}
 	} else {
-		sendErr = responder.SendMessage(ctx, req.ChatID, req.Text)
+		if tsResponder, ok := responder.(gateway.TSResponder); ok {
+			messageTS, sendErr = tsResponder.SendMessageTS(ctx, req.ChatID, req.Text)
+		} else {
+			sendErr = responder.SendMessage(ctx, req.ChatID, req.Text)
+		}
 	}
 	if sendErr != nil {
 		if logger != nil {
@@ -421,7 +428,7 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 	if mirrorErr := maybeMirrorSystemNotice(ctx, session, gatewayName, req); mirrorErr != nil {
 		fmt.Fprintf(os.Stderr, "[%s] mirror system notice failed: %v\n", time.Now().Format(time.RFC3339), mirrorErr)
 	}
-	_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: true})
+	_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: true, MessageTS: messageTS})
 }
 
 type cronNoticeNotifier struct {

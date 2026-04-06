@@ -82,6 +82,9 @@ Example:
 		}
 
 		fmt.Fprintf(os.Stderr, "Queued daemon delivery for chat %s (%d chars)\n", chatID, len(text))
+		if resp.MessageTS != "" {
+			fmt.Println(resp.MessageTS)
+		}
 		return nil
 	},
 }

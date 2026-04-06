@@ -395,45 +395,64 @@ func (c *Connector) eventToMessage(ctx context.Context, event slackevents.Events
 
 // SendMessage sends a message to the specified Slack channel, converting
 // markdown to Slack's mrkdwn format. Clears any active thinking indicator first.
-func (c *Connector) SendMessage(_ context.Context, channelID, text string) error {
+func (c *Connector) SendMessage(ctx context.Context, channelID, text string) error {
+	_, err := c.SendMessageTS(ctx, channelID, text)
+	return err
+}
+
+// SendMessageTS sends a message and returns the first chunk's Slack timestamp.
+func (c *Connector) SendMessageTS(_ context.Context, channelID, text string) (string, error) {
 	c.clearThinkingIfNeeded(channelID)
 
 	mrkdwn := util.MarkdownToSlackMrkdwn(text)
 
-	// Slack has a 4000-char limit per message; split if needed
+	var firstTS string
 	chunks := splitMessage(mrkdwn, 4000)
-	for _, chunk := range chunks {
-		_, _, err := c.api.PostMessage(channelID,
+	for i, chunk := range chunks {
+		_, ts, err := c.api.PostMessage(channelID,
 			slack.MsgOptionText(chunk, false),
 			slack.MsgOptionDisableLinkUnfurl(),
 		)
 		if err != nil {
-			return fmt.Errorf("send slack message: %w", err)
+			return "", fmt.Errorf("send slack message: %w", err)
+		}
+		if i == 0 {
+			firstTS = ts
 		}
 	}
 
-	return nil
+	return firstTS, nil
 }
 
 // SendThreadMessage sends a message as a reply to a specific thread.
-func (c *Connector) SendThreadMessage(_ context.Context, channelID, threadTS, text string) error {
+func (c *Connector) SendThreadMessage(ctx context.Context, channelID, threadTS, text string) error {
+	_, err := c.SendThreadMessageTS(ctx, channelID, threadTS, text)
+	return err
+}
+
+// SendThreadMessageTS sends a threaded message and returns the first chunk's Slack timestamp.
+func (c *Connector) SendThreadMessageTS(_ context.Context, channelID, threadTS, text string) (string, error) {
 	c.clearThinkingIfNeeded(channelID)
 
 	mrkdwn := util.MarkdownToSlackMrkdwn(text)
 
+	var firstTS string
 	chunks := splitMessage(mrkdwn, 4000)
-	for _, chunk := range chunks {
-		_, _, err := c.api.PostMessage(channelID,
+	for i, chunk := range chunks {
+		_, ts, err := c.api.PostMessage(channelID,
 			slack.MsgOptionText(chunk, false),
 			slack.MsgOptionDisableLinkUnfurl(),
 			slack.MsgOptionTS(threadTS),
 		)
 		if err != nil {
-			return fmt.Errorf("send slack thread message: %w", err)
+			return "", fmt.Errorf("send slack thread message: %w", err)
+		}
+		if i == 0 {
+			firstTS = ts
 		}
 	}
 
-	return nil
+	return firstTS, nil
 }
 
 // postThinking posts a "_thinking..._" message and records its timestamp
