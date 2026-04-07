@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -67,6 +69,7 @@ func BuildPrompt(preamble, userPrompt string, opts BuildPromptOpts) string {
 		}
 		b.WriteString(sendCmd + "\n")
 		b.WriteString("Keep any provided --source/--log flags intact so background execution stays properly correlated.\n")
+		b.WriteString("IMPORTANT: Do NOT read, cat, tail, or inspect the --log file path. It is a write-only output stream and reading it will cause a feedback loop.\n")
 		b.WriteString("\nSee GOATED_CLI_README.md for formatting details.\n")
 	}
 	return b.String()
@@ -306,15 +309,20 @@ func RunSyncCommand(ctx context.Context, store *db.Store, cmd *exec.Cmd, opts Ru
 		}
 	}
 
-	outFile, err := os.Create(opts.LogPath)
+	// Write stdout/stderr to a separate stream file to prevent feedback
+	// loops if the model reads the log path exposed in its prompt.
+	streamPath := opts.LogPath + ".stream"
+	outFile, err := os.Create(streamPath)
 	if err != nil {
-		return Result{}, fmt.Errorf("create log %s: %w", opts.LogPath, err)
+		return Result{}, fmt.Errorf("create stream log %s: %w", streamPath, err)
 	}
-	cmd.Stdout = outFile
-	cmd.Stderr = outFile
+	sw := &sizeWatchWriter{w: outFile, limit: 500 * 1024 * 1024} // 500 MB
+	cmd.Stdout = sw
+	cmd.Stderr = sw
 
 	if err := cmd.Start(); err != nil {
 		outFile.Close()
+		os.Remove(streamPath)
 		return Result{}, fmt.Errorf("start subagent: %w", err)
 	}
 
@@ -333,6 +341,19 @@ func RunSyncCommand(ctx context.Context, store *db.Store, cmd *exec.Cmd, opts Ru
 
 	runErr := cmd.Wait()
 	outFile.Close()
+
+	if sw.exceeded {
+		log.Printf("WARNING: subagent output exceeded %d bytes, log truncated (pid=%d)", sw.limit, cmd.Process.Pid)
+	}
+
+	// Move stream file to the canonical log path now that the process is done.
+	if err := os.Rename(streamPath, opts.LogPath); err != nil {
+		// Rename may fail across filesystems; fall back to copy.
+		if data, readErr := os.ReadFile(streamPath); readErr == nil {
+			_ = os.WriteFile(opts.LogPath, data, 0o644)
+		}
+		os.Remove(streamPath)
+	}
 
 	output, _ := os.ReadFile(opts.LogPath)
 	HandleCompletion(store, runID, runErr, opts)
@@ -486,4 +507,32 @@ func shellQuote(s string) string {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// sizeWatchWriter wraps an io.Writer and stops writing (discards) once the
+// cumulative bytes written exceed `limit`. This prevents runaway log growth
+// from feedback loops or infinite model output.
+type sizeWatchWriter struct {
+	w        *os.File
+	limit    int64
+	written  int64
+	exceeded bool
+	mu       sync.Mutex
+}
+
+func (sw *sizeWatchWriter) Write(p []byte) (int, error) {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	if sw.exceeded {
+		return len(p), nil // discard silently
+	}
+	sw.written += int64(len(p))
+	if sw.written > sw.limit {
+		sw.exceeded = true
+		// Write a truncation marker and stop.
+		marker := []byte("\n\n--- LOG TRUNCATED: exceeded size limit ---\n")
+		_, _ = sw.w.Write(marker)
+		return len(p), nil
+	}
+	return sw.w.Write(p)
 }

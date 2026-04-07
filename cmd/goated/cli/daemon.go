@@ -21,6 +21,7 @@ import (
 	cronpkg "goated/internal/cron"
 	"goated/internal/db"
 	"goated/internal/gateway"
+	"goated/internal/logging"
 	"goated/internal/msglog"
 	runtimepkg "goated/internal/runtime"
 	slackpkg "goated/internal/slack"
@@ -179,6 +180,16 @@ var daemonRunCmd = &cobra.Command{
 
 		// Start daily re-redaction goroutine
 		go runReRedact(ctx, cfg.LogDir, cfg.WorkspaceDir, cfg.DefaultTimezone)
+
+		// Start log retention loop (cleans up old log files)
+		go logging.StartRetentionLoop(ctx, logging.RetentionConfig{
+			DaemonLogDir: cfg.LogDir,
+			CronLogDir:   filepath.Join(cfg.LogDir, "cron", "jobs"),
+			MaxAgeDays:   cfg.LogRetentionDays,
+			MaxFiles:     cfg.LogRetentionMaxFiles,
+			Compress:     cfg.LogRetentionCompress,
+			Interval:     6 * time.Hour,
+		})
 
 		var runGateway func() error
 		var responder gateway.Responder

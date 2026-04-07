@@ -74,6 +74,9 @@ type Config struct {
 	AdminChatID                     string
 	PiProvider                      string // pi --provider value, e.g. "fireworks"
 	PiModel                         string // pi --model value, e.g. "accounts/fireworks/models/kimi-k2p5"
+	LogRetentionDays                int
+	LogRetentionMaxFiles            int
+	LogRetentionCompress            bool
 }
 
 func LoadConfig() Config {
@@ -113,6 +116,9 @@ func LoadConfig() Config {
 	v.SetDefault("slack.attachment_max_parallel", 3)
 	v.SetDefault("pi.provider", "")
 	v.SetDefault("pi.model", "")
+	v.SetDefault("log_retention_days", 7)
+	v.SetDefault("log_retention_max_files", 1000)
+	v.SetDefault("log_retention_compress", false)
 
 	// Bind env vars so they override config file values
 	v.BindEnv("gateway", "GOAT_GATEWAY")
@@ -135,6 +141,9 @@ func LoadConfig() Config {
 	v.BindEnv("slack.attachment_max_parallel", "GOAT_SLACK_ATTACHMENT_MAX_PARALLEL")
 	v.BindEnv("pi.provider", "GOAT_PI_PROVIDER")
 	v.BindEnv("pi.model", "GOAT_PI_MODEL")
+	v.BindEnv("log_retention_days", "GOAT_LOG_RETENTION_DAYS")
+	v.BindEnv("log_retention_max_files", "GOAT_LOG_RETENTION_MAX_FILES")
+	v.BindEnv("log_retention_compress", "GOAT_LOG_RETENTION_COMPRESS")
 
 	// Read config file (ignore not-found — defaults + env vars are fine)
 	readErr := v.ReadInConfig()
@@ -247,6 +256,9 @@ func LoadConfig() Config {
 		AdminChatID:                     loadCred(credsDir, "GOAT_ADMIN_CHAT_ID"),
 		PiProvider:                      v.GetString("pi.provider"),
 		PiModel:                         v.GetString("pi.model"),
+		LogRetentionDays:                v.GetInt("log_retention_days"),
+		LogRetentionMaxFiles:            v.GetInt("log_retention_max_files"),
+		LogRetentionCompress:            v.GetBool("log_retention_compress"),
 	}
 }
 
