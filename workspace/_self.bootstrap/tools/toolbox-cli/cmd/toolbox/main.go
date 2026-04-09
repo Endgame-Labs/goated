@@ -40,6 +40,7 @@ func main() {
 	rootCmd.AddCommand(browserCmd())
 	rootCmd.AddCommand(voiceCmd())
 	rootCmd.AddCommand(emailCmd())
+	rootCmd.AddCommand(calendarCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
