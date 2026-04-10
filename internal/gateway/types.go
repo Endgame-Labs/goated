@@ -21,6 +21,8 @@ type IncomingMessage struct {
 	Text                 string
 	MessageID            string // platform message ID (e.g. Slack ts)
 	ThreadID             string // platform thread ID (e.g. Slack thread_ts)
+	Reaction             string // emoji name if this is a reaction event (e.g. "white_check_mark")
+	ReactionMessageID    string // message timestamp the reaction was applied to
 	Attachments          []string
 	AttachmentResults    []AttachmentResult
 	AttachmentsFailed    []AttachmentResult

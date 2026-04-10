@@ -336,6 +336,12 @@ func (c *Connector) eventToMessage(ctx context.Context, event slackevents.Events
 	}
 
 	innerEvent := event.InnerEvent
+
+	// Handle reaction_added events
+	if rev, ok := innerEvent.Data.(*slackevents.ReactionAddedEvent); ok {
+		return c.reactionToMessage(rev, outerEventID, event.TeamID)
+	}
+
 	ev, ok := innerEvent.Data.(*slackevents.MessageEvent)
 	if !ok {
 		return gateway.IncomingMessage{}, false
@@ -390,6 +396,44 @@ func (c *Connector) eventToMessage(ctx context.Context, event slackevents.Events
 		AttachmentResults:    attachmentResults,
 		AttachmentsFailed:    failed,
 		AttachmentsSucceeded: succeeded,
+	}, true
+}
+
+// reactionToMessage converts a ReactionAddedEvent into a gateway IncomingMessage.
+// Only reactions on messages in the monitored channel are forwarded.
+func (c *Connector) reactionToMessage(ev *slackevents.ReactionAddedEvent, outerEventID, teamID string) (gateway.IncomingMessage, bool) {
+	// Only handle reactions on messages (not files or file comments)
+	if ev.Item.Type != "message" {
+		return gateway.IncomingMessage{}, false
+	}
+
+	// Only handle reactions in the monitored channel
+	if ev.Item.Channel != c.channelID {
+		return gateway.IncomingMessage{}, false
+	}
+
+	// Dedup using outer event ID + reaction details
+	dedupKey := fmt.Sprintf("reaction:%s:%s:%s:%s", teamID, outerEventID, ev.Reaction, ev.Item.Timestamp)
+	c.mu.Lock()
+	if c.seenEvents[dedupKey] {
+		c.mu.Unlock()
+		return gateway.IncomingMessage{}, false
+	}
+	c.seenEvents[dedupKey] = true
+	c.mu.Unlock()
+
+	fmt.Fprintf(os.Stderr, "[%s] reaction_added: user=%s reaction=%s on message=%s channel=%s\n",
+		time.Now().Format(time.RFC3339), ev.User, ev.Reaction, ev.Item.Timestamp, ev.Item.Channel)
+
+	return gateway.IncomingMessage{
+		Channel:           "slack",
+		ChatID:            ev.Item.Channel,
+		UserID:            ev.User,
+		Text:              ev.Reaction,
+		MessageID:         ev.EventTimestamp,
+		ThreadID:          ev.Item.Timestamp,
+		Reaction:          ev.Reaction,
+		ReactionMessageID: ev.Item.Timestamp,
 	}, true
 }
 
