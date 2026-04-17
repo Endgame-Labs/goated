@@ -34,6 +34,7 @@ Example:
 		threadTS, _ := cmd.Flags().GetString("thread")
 		source, _ := cmd.Flags().GetString("source")
 		logPath, _ := cmd.Flags().GetString("log")
+		blocksFile, _ := cmd.Flags().GetString("blocks-file")
 		if chatID == "" {
 			return fmt.Errorf("--chat is required")
 		}
@@ -43,8 +44,18 @@ Example:
 			return fmt.Errorf("reading stdin: %w", err)
 		}
 		text := strings.TrimSpace(string(data))
-		if text == "" {
-			return fmt.Errorf("empty message; pipe markdown into stdin")
+
+		var blocksJSON json.RawMessage
+		if blocksFile != "" {
+			blocksData, err := os.ReadFile(blocksFile)
+			if err != nil {
+				return fmt.Errorf("reading blocks file %s: %w", blocksFile, err)
+			}
+			blocksJSON = json.RawMessage(blocksData)
+		}
+
+		if text == "" && len(blocksJSON) == 0 {
+			return fmt.Errorf("empty message; pipe markdown into stdin or use --blocks-file")
 		}
 
 		cfg := app.LoadConfig()
@@ -60,12 +71,13 @@ Example:
 		defer conn.Close()
 
 		if err := json.NewEncoder(conn).Encode(daemonSendRequest{
-			RequestID: requestID,
-			ChatID:    chatID,
-			ThreadTS:  strings.TrimSpace(threadTS),
-			Text:      text,
-			Source:    strings.TrimSpace(source),
-			LogPath:   strings.TrimSpace(logPath),
+			RequestID:  requestID,
+			ChatID:     chatID,
+			ThreadTS:   strings.TrimSpace(threadTS),
+			Text:       text,
+			Source:     strings.TrimSpace(source),
+			LogPath:    strings.TrimSpace(logPath),
+			BlocksJSON: blocksJSON,
 		}); err != nil {
 			return fmt.Errorf("send daemon request: %w", err)
 		}
@@ -81,7 +93,11 @@ Example:
 			return fmt.Errorf("daemon rejected message: %s", resp.Error)
 		}
 
-		fmt.Fprintf(os.Stderr, "Queued daemon delivery for chat %s (%d chars)\n", chatID, len(text))
+		if len(blocksJSON) > 0 {
+			fmt.Fprintf(os.Stderr, "Queued daemon block delivery for chat %s (fallback=%d chars, blocks=%d bytes)\n", chatID, len(text), len(blocksJSON))
+		} else {
+			fmt.Fprintf(os.Stderr, "Queued daemon delivery for chat %s (%d chars)\n", chatID, len(text))
+		}
 		return nil
 	},
 }
@@ -91,5 +107,6 @@ func init() {
 	sendUserMessageCmd.Flags().String("thread", "", "Thread timestamp to reply to (Slack thread_ts)")
 	sendUserMessageCmd.Flags().String("source", "", "Caller source (e.g. cron, subagent) — reserved for daemon delivery")
 	sendUserMessageCmd.Flags().String("log", "", "Path to the caller's log file")
+	sendUserMessageCmd.Flags().String("blocks-file", "", "Path to a JSON file containing Block Kit blocks array")
 	rootCmd.AddCommand(sendUserMessageCmd)
 }

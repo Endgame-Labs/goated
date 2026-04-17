@@ -23,6 +23,7 @@ import (
 	"goated/internal/app"
 	"goated/internal/gateway"
 	runtimepkg "goated/internal/runtime"
+	"goated/internal/slack/blockkit"
 	"goated/internal/util"
 )
 
@@ -94,6 +95,8 @@ type Connector struct {
 	seenEvents map[string]bool // dedup retried Slack events
 
 	msgQueue chan slackevents.EventsAPIEvent // serializes message processing
+
+	interactionHandler InteractionHandler // called for interactive events (buttons, menus)
 }
 
 type AttachmentConfig struct {
@@ -224,6 +227,19 @@ func (c *Connector) Run(ctx context.Context, handler gateway.Handler) error {
 			case socketmode.EventTypeInteractive:
 				if evt.Request != nil {
 					c.socket.Ack(*evt.Request)
+				}
+				c.mu.Lock()
+				ih := c.interactionHandler
+				c.mu.Unlock()
+				if ih != nil {
+					if callback, ok := evt.Data.(slack.InteractionCallback); ok {
+						go func() {
+							if err := ih(ctx, callback); err != nil {
+								fmt.Fprintf(os.Stderr, "[%s] interaction handler error: %v\n",
+									time.Now().Format(time.RFC3339), err)
+							}
+						}()
+					}
 				}
 
 			case socketmode.EventTypeSlashCommand:
@@ -477,6 +493,65 @@ func (c *Connector) SendThreadMessage(_ context.Context, channelID, threadTS, te
 		}
 	}
 
+	return nil
+}
+
+// SendBlockMessage sends a Block Kit rich message. The blocksJSON must be a
+// JSON array of Slack block objects. The fallbackText is shown in
+// notifications and non-Block-Kit clients.
+func (c *Connector) SendBlockMessage(_ context.Context, channelID, fallbackText string, blocksJSON json.RawMessage) error {
+	c.clearThinkingIfNeeded(channelID)
+
+	blocks, _, err := blockkit.ParseBlocksJSON(blocksJSON)
+	if err != nil {
+		return fmt.Errorf("parse block kit JSON: %w", err)
+	}
+
+	_, _, err = c.api.PostMessage(channelID,
+		slack.MsgOptionText(fallbackText, false),
+		slack.MsgOptionBlocks(blocks...),
+		slack.MsgOptionDisableLinkUnfurl(),
+	)
+	if err != nil {
+		return fmt.Errorf("send slack block message: %w", err)
+	}
+	return nil
+}
+
+// SendThreadBlockMessage sends a Block Kit message as a thread reply.
+func (c *Connector) SendThreadBlockMessage(_ context.Context, channelID, threadTS, fallbackText string, blocksJSON json.RawMessage) error {
+	c.clearThinkingIfNeeded(channelID)
+
+	blocks, _, err := blockkit.ParseBlocksJSON(blocksJSON)
+	if err != nil {
+		return fmt.Errorf("parse block kit JSON: %w", err)
+	}
+
+	_, _, err = c.api.PostMessage(channelID,
+		slack.MsgOptionText(fallbackText, false),
+		slack.MsgOptionBlocks(blocks...),
+		slack.MsgOptionDisableLinkUnfurl(),
+		slack.MsgOptionTS(threadTS),
+	)
+	if err != nil {
+		return fmt.Errorf("send slack thread block message: %w", err)
+	}
+	return nil
+}
+
+// UpdateMessage updates an existing message with new text and optional blocks.
+// Used for post-interaction feedback (e.g. replacing buttons with confirmation).
+func (c *Connector) UpdateMessage(_ context.Context, channelID, messageTS, text string, blocks ...slack.Block) error {
+	opts := []slack.MsgOption{
+		slack.MsgOptionText(text, false),
+	}
+	if len(blocks) > 0 {
+		opts = append(opts, slack.MsgOptionBlocks(blocks...))
+	}
+	_, _, _, err := c.api.UpdateMessage(channelID, messageTS, opts...)
+	if err != nil {
+		return fmt.Errorf("update slack message: %w", err)
+	}
 	return nil
 }
 
