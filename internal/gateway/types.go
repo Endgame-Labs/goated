@@ -1,6 +1,9 @@
 package gateway
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 type AttachmentResult struct {
 	Index      int
@@ -37,6 +40,13 @@ type ThreadedResponder interface {
 
 type MediaResponder interface {
 	SendMedia(ctx context.Context, chatID, filePath, caption, mediaType string) error
+}
+
+// BlockResponder sends rich Block Kit messages. The blocksJSON payload is
+// kept as json.RawMessage so the gateway package stays Slack-agnostic.
+type BlockResponder interface {
+	SendBlockMessage(ctx context.Context, chatID, fallbackText string, blocksJSON json.RawMessage) error
+	SendThreadBlockMessage(ctx context.Context, chatID, threadTS, fallbackText string, blocksJSON json.RawMessage) error
 }
 
 type Handler interface {
