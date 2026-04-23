@@ -77,7 +77,6 @@ func (r *SessionRuntime) writeThreadID(id string) error {
 
 func (r *SessionRuntime) execArgs() []string {
 	return []string{
-		"exec",
 		"--json",
 		"--sandbox", "danger-full-access",
 		"--dangerously-bypass-approvals-and-sandbox",
@@ -86,10 +85,11 @@ func (r *SessionRuntime) execArgs() []string {
 }
 
 func (r *SessionRuntime) promptArgs(threadID string) []string {
-	args := r.execArgs()
 	if threadID != "" {
-		return append(args, "resume", threadID, "-")
+		args := append([]string{"exec", "resume"}, r.execArgs()...)
+		return append(args, threadID, "-")
 	}
+	args := append([]string{"exec"}, r.execArgs()...)
 	return append(args, "-")
 }
 
@@ -135,6 +135,7 @@ func (r *SessionRuntime) sendPrompt(ctx context.Context, prompt string, forceFre
 	}
 
 	cmd := exec.CommandContext(ctx, "codex", r.promptArgs(threadID)...)
+
 	cmd.Dir = r.workspaceDir
 	cmd.Stdin = strings.NewReader(prompt)
 	if reqID := msglog.RequestIDFromContext(ctx); reqID != "" {

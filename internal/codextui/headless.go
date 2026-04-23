@@ -75,10 +75,13 @@ func (h *HeadlessRuntime) RunBackground(store *db.Store, req agent.HeadlessReque
 	workspaceDir := chooseWorkspace(req.WorkspaceDir, h.WorkspaceDir)
 	cmd := exec.Command(
 		"codex",
-		headlessArgs()...,
+		"exec",
+		"--sandbox", "danger-full-access",
+		"--dangerously-bypass-approvals-and-sandbox",
+		"-c", `model_instructions_file="GOATED.md"`,
+		req.Prompt,
 	)
 	cmd.Dir = workspaceDir
-	cmd.Stdin = strings.NewReader(req.Prompt)
 
 	result, err := subagent.RunBackgroundCommand(store, cmd, subagent.RunOpts{
 		WorkspaceDir:      cmd.Dir,
