@@ -40,6 +40,7 @@ type Connector struct {
 	sweepEvery          time.Duration
 
 	allowedChatIDs map[int64]struct{}
+	respondAll     bool
 	botUsername    string
 	botUserID      int64
 }
@@ -110,6 +111,12 @@ func NewConnector(token string, allowedChatIDs []int64, store OffsetStore, attac
 		botUsername:         bot.Self.UserName,
 		botUserID:           bot.Self.ID,
 	}, nil
+}
+
+// SetRespondAll configures the connector to respond to all messages in group
+// chats, not just @-mentions, replies, or slash commands.
+func (c *Connector) SetRespondAll(v bool) {
+	c.respondAll = v
 }
 
 func (c *Connector) Run(ctx context.Context, handler gateway.Handler, mode RunMode, webhookOpts WebhookOptions) error {
@@ -265,7 +272,7 @@ func (c *Connector) processUpdate(ctx context.Context, handler gateway.Handler, 
 	}
 
 	isGroup := update.Message.Chat.IsGroup() || update.Message.Chat.IsSuperGroup()
-	if isGroup && !c.messageAddressesBot(update.Message) {
+	if isGroup && !c.respondAll && !c.messageAddressesBot(update.Message) {
 		return nil
 	}
 

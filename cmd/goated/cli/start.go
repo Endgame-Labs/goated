@@ -113,6 +113,7 @@ var startCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			conn.SetRespondAll(cfg.TelegramGroupRespondAll)
 
 			runner := &cronpkg.Runner{
 				Store:        store,
