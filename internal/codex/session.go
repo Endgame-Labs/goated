@@ -75,10 +75,18 @@ func (r *SessionRuntime) writeThreadID(id string) error {
 	return os.WriteFile(r.threadIDPath(), []byte(id+"\n"), 0o644)
 }
 
-func (r *SessionRuntime) baseArgs() []string {
+func (r *SessionRuntime) execArgs() []string {
 	return []string{
 		"--json",
 		"--sandbox", "danger-full-access",
+		"--dangerously-bypass-approvals-and-sandbox",
+		"-c", `model_instructions_file="GOATED.md"`,
+	}
+}
+
+func (r *SessionRuntime) resumeArgs() []string {
+	return []string{
+		"--json",
 		"--dangerously-bypass-approvals-and-sandbox",
 		"-c", `model_instructions_file="GOATED.md"`,
 	}
@@ -127,9 +135,12 @@ func (r *SessionRuntime) sendPrompt(ctx context.Context, prompt string, forceFre
 
 	args := []string{"exec"}
 	if threadID != "" {
-		args = append(args, "resume", threadID)
+		args = append(args, "resume")
+		args = append(args, r.resumeArgs()...)
+		args = append(args, threadID)
+	} else {
+		args = append(args, r.execArgs()...)
 	}
-	args = append(args, r.baseArgs()...)
 	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.Dir = r.workspaceDir
 	cmd.Stdin = strings.NewReader(prompt)
