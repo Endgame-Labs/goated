@@ -126,9 +126,10 @@ var daemonRunCmd = &cobra.Command{
 			// Non-fatal — continue without message logging
 		}
 
-		// Initialize session file with current session ID (if one exists)
+		sessionIDPath := runtimeSessionIDPath(cfg.LogDir, cfg.AgentRuntime)
+
+		// Initialize session file with current runtime session ID (if one exists)
 		if msgLogger != nil {
-			sessionIDPath := filepath.Join(cfg.LogDir, "claude_session", "session_id")
 			if data, err := os.ReadFile(sessionIDPath); err == nil {
 				sid := strings.TrimSpace(string(data))
 				if sid != "" {
@@ -171,7 +172,7 @@ var daemonRunCmd = &cobra.Command{
 			DefaultTimezone: cfg.DefaultTimezone,
 			AdminChatID:     cfg.AdminChatID,
 			MsgLogger:       msgLogger,
-			SessionIDPath:   filepath.Join(cfg.LogDir, "claude_session", "session_id"),
+			SessionIDPath:   sessionIDPath,
 			DrainCtx:        drainCtx,
 		}
 
@@ -406,6 +407,10 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 	req.ThreadTS = strings.TrimSpace(req.ThreadTS)
 	req.Source = strings.TrimSpace(req.Source)
 	req.LogPath = strings.TrimSpace(req.LogPath)
+	req.RequestID = strings.TrimSpace(req.RequestID)
+	if req.RequestID != "" {
+		ctx = msglog.WithRequestID(ctx, req.RequestID)
+	}
 	if req.Text == "" && req.FilePath == "" {
 		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: "text or file_path is required"})
 		return
@@ -509,7 +514,8 @@ func maybeMirrorSystemNotice(ctx context.Context, session agent.SessionRuntime, 
 	// should not be mirrored back into that same session. Doing so can deadlock:
 	// the runtime waits for send_user_message to return while the daemon waits
 	// for the same runtime to accept the mirrored notice.
-	if strings.TrimSpace(req.Source) == "" {
+	noticeSource := strings.TrimSpace(req.Source)
+	if noticeSource == "" {
 		return nil
 	}
 	sender, ok := session.(agent.SystemNoticeSender)
@@ -524,10 +530,6 @@ func maybeMirrorSystemNotice(ctx context.Context, session agent.SessionRuntime, 
 			message = fmt.Sprintf("[media:%s] %s", withDefault(req.MediaType, "auto"), req.FilePath)
 		}
 	}
-	noticeSource := req.Source
-	if noticeSource == "" {
-		noticeSource = "assistant_reply"
-	}
 	metadata := map[string]string{
 		"source": noticeSource,
 		"mirror": "true",
@@ -540,6 +542,17 @@ func maybeMirrorSystemNotice(ctx context.Context, session agent.SessionRuntime, 
 		metadata["media_type"] = withDefault(req.MediaType, "auto")
 	}
 	return sender.SendSystemNotice(ctx, channel, req.ChatID, noticeSource, message, metadata)
+}
+
+func runtimeSessionIDPath(logDir, runtimeName string) string {
+	switch agent.RuntimeProvider(runtimeName) {
+	case "", agent.RuntimeClaude, agent.RuntimeClaudeTUI:
+		return filepath.Join(logDir, "claude_session", "session_id")
+	case agent.RuntimeCodex:
+		return filepath.Join(logDir, "codex_session", "thread_id")
+	default:
+		return ""
+	}
 }
 
 func ensureSelfRepo(workspaceDir string) error {

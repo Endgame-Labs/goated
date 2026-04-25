@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -81,18 +82,36 @@ func TestMaybeMirrorSystemNotice_ForwardsMessageMetadata(t *testing.T) {
 	}
 }
 
-func TestMaybeMirrorSystemNotice_DefaultsMirrorSourceWhenSourceMissing(t *testing.T) {
+func TestMaybeMirrorSystemNotice_SkipsMirrorWhenSourceMissing(t *testing.T) {
 	session := &noticeSpySession{}
 	if err := maybeMirrorSystemNotice(context.Background(), session, "telegram", daemonSendRequest{ChatID: "chat-1", Text: "hello"}); err != nil {
 		t.Fatalf("maybeMirrorSystemNotice() error = %v", err)
 	}
-	if session.calls != 1 {
-		t.Fatalf("calls = %d, want 1", session.calls)
+	if session.calls != 0 {
+		t.Fatalf("calls = %d, want 0", session.calls)
 	}
-	if session.source != "assistant_reply" {
-		t.Fatalf("source = %q, want assistant_reply", session.source)
+}
+
+func TestRuntimeSessionIDPath(t *testing.T) {
+	logDir := "/tmp/goated-logs"
+	tests := []struct {
+		name        string
+		runtimeName string
+		want        string
+	}{
+		{name: "default claude", runtimeName: "", want: filepath.Join(logDir, "claude_session", "session_id")},
+		{name: "claude", runtimeName: string(agent.RuntimeClaude), want: filepath.Join(logDir, "claude_session", "session_id")},
+		{name: "claude tui", runtimeName: string(agent.RuntimeClaudeTUI), want: filepath.Join(logDir, "claude_session", "session_id")},
+		{name: "codex", runtimeName: string(agent.RuntimeCodex), want: filepath.Join(logDir, "codex_session", "thread_id")},
+		{name: "codex tui", runtimeName: string(agent.RuntimeCodexTUI), want: ""},
+		{name: "pi", runtimeName: string(agent.RuntimePi), want: ""},
 	}
-	if got := session.metadata["mirror"]; got != "true" {
-		t.Fatalf("mirror = %q, want true", got)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := runtimeSessionIDPath(logDir, tt.runtimeName); got != tt.want {
+				t.Fatalf("runtimeSessionIDPath(%q) = %q, want %q", tt.runtimeName, got, tt.want)
+			}
+		})
 	}
 }

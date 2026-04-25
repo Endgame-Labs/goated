@@ -29,7 +29,7 @@ type Service struct {
 	DefaultTimezone string
 	AdminChatID     string // chat ID for escalation alerts
 	MsgLogger       *msglog.Logger
-	SessionIDPath   string // path to claude session ID file for lifecycle tracking
+	SessionIDPath   string // path to runtime session/thread ID file for lifecycle tracking
 
 	// DrainCtx is a context that stays alive during graceful shutdown so
 	// in-flight handlers can finish. Set this to a context that only cancels
@@ -431,7 +431,7 @@ func (s *Service) logStatus(requestID string, entryType msglog.EntryType, status
 	s.MsgLogger.UpdateStatus(requestID, entryType, status)
 }
 
-// readSessionID reads the current Claude session ID from the session ID file.
+// readSessionID reads the current runtime session/thread ID from the session ID file.
 func (s *Service) readSessionID() string {
 	if s.SessionIDPath == "" {
 		return ""

@@ -13,9 +13,9 @@ const currentSessionSeqFile = ".current_session_seq"
 
 // SessionFileManager tracks per-session JSONL files named YYYY-MM-DD-NNN.
 type SessionFileManager struct {
-	dir        string         // logs/message_logs/sessions/
+	dir        string // logs/message_logs/sessions/
 	tz         *time.Location
-	currentSeq string         // e.g. "2026-03-16-003"
+	currentSeq string // e.g. "2026-03-16-003"
 	sessionID  string
 }
 
@@ -53,7 +53,7 @@ func (m *SessionFileManager) CurrentSeq() string {
 	return m.currentSeq
 }
 
-// SessionID returns the current Claude session ID.
+// SessionID returns the current runtime session/thread ID.
 func (m *SessionFileManager) SessionID() string {
 	return m.sessionID
 }

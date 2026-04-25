@@ -15,6 +15,16 @@ type HeadlessRuntime struct {
 	WorkspaceDir string
 }
 
+func headlessArgs() []string {
+	return []string{
+		"exec",
+		"--sandbox", "danger-full-access",
+		"--dangerously-bypass-approvals-and-sandbox",
+		"-c", `model_instructions_file="GOATED.md"`,
+		"-",
+	}
+}
+
 func NewHeadlessRuntime(workspaceDir string) *HeadlessRuntime {
 	return &HeadlessRuntime{WorkspaceDir: workspaceDir}
 }
@@ -29,10 +39,7 @@ func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agen
 	cmd := exec.CommandContext(
 		ctx,
 		"codex",
-		"exec",
-		"--sandbox", "danger-full-access",
-		"--dangerously-bypass-approvals-and-sandbox",
-		"-c", `model_instructions_file="GOATED.md"`,
+		headlessArgs()...,
 	)
 	cmd.Dir = workspaceDir
 	cmd.Stdin = strings.NewReader(req.Prompt)
@@ -68,10 +75,7 @@ func (h *HeadlessRuntime) RunBackground(store *db.Store, req agent.HeadlessReque
 	workspaceDir := chooseWorkspace(req.WorkspaceDir, h.WorkspaceDir)
 	cmd := exec.Command(
 		"codex",
-		"exec",
-		"--sandbox", "danger-full-access",
-		"--dangerously-bypass-approvals-and-sandbox",
-		"-c", `model_instructions_file="GOATED.md"`,
+		headlessArgs()...,
 	)
 	cmd.Dir = workspaceDir
 	cmd.Stdin = strings.NewReader(req.Prompt)

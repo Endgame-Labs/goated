@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -129,6 +130,8 @@ type Result struct {
 	RuntimeMode     string
 	RuntimeVersion  string
 }
+
+var resolveExecutable = os.Executable
 
 // handleCompletion records the subagent's final status and notifies the main
 // interactive runtime session. Shared by RunSync and RunBackground.
@@ -392,31 +395,218 @@ func RunBackgroundCommand(store *db.Store, cmd *exec.Cmd, opts RunOpts) (Result,
 	}
 	_ = logFile.Close()
 
+	var runID uint64
+
+	stdinPath := ""
+	if cmd.Stdin != nil {
+		stdinData, err := io.ReadAll(cmd.Stdin)
+		if err != nil {
+			if runID > 0 {
+				_ = store.RecordSubagentFinish(runID, "error")
+			}
+			return Result{}, fmt.Errorf("read subagent stdin: %w", err)
+		}
+		stdinFile, err := os.CreateTemp(filepath.Dir(opts.LogPath), "goat-subagent-stdin-*")
+		if err != nil {
+			if runID > 0 {
+				_ = store.RecordSubagentFinish(runID, "error")
+			}
+			return Result{}, fmt.Errorf("create stdin file: %w", err)
+		}
+		stdinPath = stdinFile.Name()
+		if _, err := stdinFile.Write(stdinData); err != nil {
+			_ = stdinFile.Close()
+			_ = os.Remove(stdinPath)
+			if runID > 0 {
+				_ = store.RecordSubagentFinish(runID, "error")
+			}
+			return Result{}, fmt.Errorf("write stdin file: %w", err)
+		}
+		if err := stdinFile.Close(); err != nil {
+			_ = os.Remove(stdinPath)
+			if runID > 0 {
+				_ = store.RecordSubagentFinish(runID, "error")
+			}
+			return Result{}, fmt.Errorf("close stdin file: %w", err)
+		}
+	}
+
 	wrapper, err := os.CreateTemp(filepath.Dir(opts.LogPath), "goat-subagent-*.sh")
 	if err != nil {
+		if stdinPath != "" {
+			_ = os.Remove(stdinPath)
+		}
+		if runID > 0 {
+			_ = store.RecordSubagentFinish(runID, "error")
+		}
 		return Result{}, fmt.Errorf("create wrapper script: %w", err)
 	}
 
-	helperPath, err := os.Executable()
+	helperPath, err := resolveExecutable()
 	if err != nil {
 		_ = wrapper.Close()
+		_ = os.Remove(wrapper.Name())
+		if stdinPath != "" {
+			_ = os.Remove(stdinPath)
+		}
+		if runID > 0 {
+			_ = store.RecordSubagentFinish(runID, "error")
+		}
 		return Result{}, fmt.Errorf("resolve helper path: %w", err)
 	}
 
 	invocation := shellJoin(append([]string{cmd.Path}, cmd.Args[1:]...))
+	if stdinPath != "" {
+		invocation += " < " + shellQuote(stdinPath)
+	}
 	statusFlag := "ok"
 	if store == nil {
 		statusFlag = "unknown"
 	}
+	finishCmd := baseFinishCommand(helperPath, store, opts)
+
+	gatePath := wrapper.Name() + ".ready"
+	runIDPath := wrapper.Name() + ".runid"
+	scriptContent := func(finishCmd []string) string {
+		cleanupCmd := "rm -f \"$0\" " + shellQuote(gatePath)
+		if store != nil {
+			cleanupCmd += " " + shellQuote(runIDPath)
+		}
+		if stdinPath != "" {
+			cleanupCmd += "\nrm -f " + shellQuote(stdinPath)
+		}
+		runIDSetup := ""
+		if store != nil {
+			runIDSetup = fmt.Sprintf("run_id=$(cat %s)\n", shellQuote(runIDPath))
+		}
+		return fmt.Sprintf(`#!/bin/sh
+while [ ! -f %s ]; do sleep 0.05; done
+%s
+cd %s || exit 1
+%s >> %s 2>&1
+status=$?
+finish_status=%s
+if [ "$status" -ne 0 ]; then
+  finish_status=error
+fi
+%s >/dev/null 2>&1 || true
+%s
+exit "$status"
+`, shellQuote(gatePath), runIDSetup, shellQuote(cmd.Dir), invocation, shellQuote(opts.LogPath), statusFlag, strings.Join(finishCmd, " "), cleanupCmd)
+	}
+
+	if _, err := wrapper.WriteString(scriptContent(finishCmd)); err != nil {
+		_ = wrapper.Close()
+		_ = os.Remove(wrapper.Name())
+		_ = os.Remove(gatePath)
+		_ = os.Remove(runIDPath)
+		if stdinPath != "" {
+			_ = os.Remove(stdinPath)
+		}
+		return Result{}, fmt.Errorf("write wrapper script: %w", err)
+	}
+	if err := wrapper.Close(); err != nil {
+		_ = os.Remove(wrapper.Name())
+		_ = os.Remove(gatePath)
+		_ = os.Remove(runIDPath)
+		if stdinPath != "" {
+			_ = os.Remove(stdinPath)
+		}
+		return Result{}, fmt.Errorf("close wrapper script: %w", err)
+	}
+	if err := os.Chmod(wrapper.Name(), 0o700); err != nil {
+		_ = os.Remove(wrapper.Name())
+		_ = os.Remove(gatePath)
+		_ = os.Remove(runIDPath)
+		if stdinPath != "" {
+			_ = os.Remove(stdinPath)
+		}
+		return Result{}, fmt.Errorf("chmod wrapper script: %w", err)
+	}
+
+	wrapped := exec.Command("/bin/sh", wrapper.Name())
+	wrapped.Dir = cmd.Dir
+	wrapped.Env = cmd.Env
+	wrapped.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := wrapped.Start(); err != nil {
+		_ = os.Remove(wrapper.Name())
+		_ = os.Remove(gatePath)
+		_ = os.Remove(runIDPath)
+		if stdinPath != "" {
+			_ = os.Remove(stdinPath)
+		}
+		return Result{}, fmt.Errorf("start subagent wrapper: %w", err)
+	}
+
+	pid := wrapped.Process.Pid
+
+	if store != nil {
+		var err error
+		runID, err = store.RecordSubagentStart(
+			pid,
+			opts.Source,
+			opts.CronID,
+			opts.ChatID,
+			opts.Prompt,
+			opts.LogPath,
+			opts.Runtime,
+		)
+		if err != nil {
+			_ = wrapped.Process.Kill()
+			_ = os.Remove(wrapper.Name())
+			_ = os.Remove(gatePath)
+			_ = os.Remove(runIDPath)
+			if stdinPath != "" {
+				_ = os.Remove(stdinPath)
+			}
+			return Result{}, fmt.Errorf("record subagent start: %w", err)
+		}
+		if err := os.WriteFile(runIDPath, []byte(fmt.Sprint(runID)+"\n"), 0o600); err != nil {
+			_ = store.RecordSubagentFinish(runID, "error")
+			_ = wrapped.Process.Kill()
+			_ = os.Remove(wrapper.Name())
+			_ = os.Remove(gatePath)
+			_ = os.Remove(runIDPath)
+			if stdinPath != "" {
+				_ = os.Remove(stdinPath)
+			}
+			return Result{}, fmt.Errorf("write subagent run id: %w", err)
+		}
+	}
+
+	if err := os.WriteFile(gatePath, []byte("ready\n"), 0o600); err != nil {
+		if runID > 0 {
+			_ = store.RecordSubagentFinish(runID, "error")
+		}
+		_ = wrapped.Process.Kill()
+		_ = os.Remove(wrapper.Name())
+		_ = os.Remove(runIDPath)
+		if stdinPath != "" {
+			_ = os.Remove(stdinPath)
+		}
+		return Result{}, fmt.Errorf("release subagent wrapper: %w", err)
+	}
+
+	return Result{
+		PID:             pid,
+		Status:          "running",
+		RuntimeProvider: opts.Runtime.Provider,
+		RuntimeMode:     opts.Runtime.Mode,
+		RuntimeVersion:  opts.Runtime.Version,
+	}, nil
+}
+
+func baseFinishCommand(helperPath string, store *db.Store, opts RunOpts) []string {
 	finishCmd := []string{
 		shellQuote(helperPath), "subagent-finish",
-		"--status", "$finish_status",
+		"--status", "$finish_status", // shell variable expanded by wrapper
 		"--source", shellQuote(opts.Source),
 		"--log", shellQuote(opts.LogPath),
 		"--session", shellQuote(opts.SessionName),
 	}
 	if store != nil {
 		finishCmd = append(finishCmd, "--db", shellQuote(store.Path()))
+		finishCmd = append(finishCmd, "--run-id", "$run_id")
 	}
 	if opts.ChatID != "" {
 		finishCmd = append(finishCmd, "--chat", shellQuote(opts.ChatID))
@@ -433,65 +623,7 @@ func RunBackgroundCommand(store *db.Store, cmd *exec.Cmd, opts RunOpts) (Result,
 	if opts.Runtime.Version != "" {
 		finishCmd = append(finishCmd, "--runtime-version", shellQuote(opts.Runtime.Version))
 	}
-
-	script := fmt.Sprintf(`#!/bin/sh
-cd %s || exit 1
-%s >> %s 2>&1
-status=$?
-finish_status=%s
-if [ "$status" -ne 0 ]; then
-  finish_status=error
-fi
-%s >/dev/null 2>&1 || true
-rm -f "$0"
-exit "$status"
-`, shellQuote(cmd.Dir), invocation, shellQuote(opts.LogPath), statusFlag, strings.Join(finishCmd, " "))
-
-	if _, err := wrapper.WriteString(script); err != nil {
-		_ = wrapper.Close()
-		return Result{}, fmt.Errorf("write wrapper script: %w", err)
-	}
-	if err := wrapper.Close(); err != nil {
-		return Result{}, fmt.Errorf("close wrapper script: %w", err)
-	}
-	if err := os.Chmod(wrapper.Name(), 0o700); err != nil {
-		return Result{}, fmt.Errorf("chmod wrapper script: %w", err)
-	}
-
-	wrapped := exec.Command("/bin/sh", wrapper.Name())
-	wrapped.Dir = cmd.Dir
-	wrapped.Env = cmd.Env
-	wrapped.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := wrapped.Start(); err != nil {
-		return Result{}, fmt.Errorf("start subagent wrapper: %w", err)
-	}
-
-	pid := wrapped.Process.Pid
-
-	var runID uint64
-	if store != nil {
-		runID, _ = store.RecordSubagentStart(
-			pid,
-			opts.Source,
-			opts.CronID,
-			opts.ChatID,
-			opts.Prompt,
-			opts.LogPath,
-			opts.Runtime,
-		)
-	}
-
-	if runID > 0 {
-		finishCmd = append(finishCmd, "--run-id", shellQuote(fmt.Sprint(runID)))
-	}
-
-	return Result{
-		PID:             pid,
-		Status:          "running",
-		RuntimeProvider: opts.Runtime.Provider,
-		RuntimeMode:     opts.Runtime.Mode,
-		RuntimeVersion:  opts.Runtime.Version,
-	}, nil
+	return finishCmd
 }
 
 func shellJoin(parts []string) string {

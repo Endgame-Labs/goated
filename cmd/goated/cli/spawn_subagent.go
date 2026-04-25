@@ -44,7 +44,7 @@ var spawnSubagentCmd = &cobra.Command{
 			return fmt.Errorf("mkdir subagent log dir: %w", err)
 		}
 
-		logFile := filepath.Join(logDir, time.Now().Format("20060102-150405")+".log")
+		logFile := filepath.Join(logDir, time.Now().Format("20060102-150405.000000000")+".log")
 		fullPrompt := subagent.BuildPrompt(subagent.BuildPreamble(""), prompt, subagent.BuildPromptOpts{
 			ChatID:  chatID,
 			Source:  "subagent",
