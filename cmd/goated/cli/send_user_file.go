@@ -28,6 +28,8 @@ Examples:
 		filePath, _ := cmd.Flags().GetString("path")
 		caption, _ := cmd.Flags().GetString("caption")
 		mediaType, _ := cmd.Flags().GetString("type")
+		source, _ := cmd.Flags().GetString("source")
+		logPath, _ := cmd.Flags().GetString("log")
 
 		if chatID == "" {
 			return fmt.Errorf("--chat is required")
@@ -65,6 +67,8 @@ Examples:
 			FilePath:  filePath,
 			Caption:   strings.TrimSpace(caption),
 			MediaType: mediaType,
+			Source:    strings.TrimSpace(source),
+			LogPath:   strings.TrimSpace(logPath),
 		}); err != nil {
 			return fmt.Errorf("send daemon request: %w", err)
 		}
@@ -90,5 +94,7 @@ func init() {
 	sendUserFileCmd.Flags().String("path", "", "Local file path to send (required)")
 	sendUserFileCmd.Flags().String("caption", "", "Optional caption/description")
 	sendUserFileCmd.Flags().String("type", "auto", "Media type: auto, photo, or document")
+	sendUserFileCmd.Flags().String("source", "", "Caller source (e.g. cron, subagent) — reserved for daemon delivery")
+	sendUserFileCmd.Flags().String("log", "", "Path to the caller's log file")
 	rootCmd.AddCommand(sendUserFileCmd)
 }

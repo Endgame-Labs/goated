@@ -111,8 +111,9 @@ func ReplayStuckMessages(ctx context.Context, logger *Logger, session agent.Sess
 		const maxBackoff = 30 * time.Second
 		const maxAttempts = 5
 
+		replayCtx := WithRequestID(ctx, sm.RequestID)
 		for attempt := 0; attempt < maxAttempts; attempt++ {
-			err := session.SendUserPrompt(ctx, msg.Channel, msg.ChatID, msg.Text, nil, msg.MessageID, msg.ThreadID, nil)
+			err := session.SendUserPrompt(replayCtx, msg.Channel, msg.ChatID, msg.Text, nil, msg.MessageID, msg.ThreadID, nil)
 			if err != nil {
 				logger.LogEvent(sm.RequestID, EventData{
 					Name:   "replay_send_failed",
