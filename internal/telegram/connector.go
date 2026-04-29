@@ -310,9 +310,15 @@ func (c *Connector) processUpdate(ctx context.Context, handler gateway.Handler, 
 	}
 	if update.Message.ReplyToMessage != nil {
 		msg.ReplyToText = update.Message.ReplyToMessage.Text
-		// Also check Caption for media messages (photos with captions)
+		// Also check Caption for media messages (photos with captions).
 		if msg.ReplyToText == "" {
 			msg.ReplyToText = update.Message.ReplyToMessage.Caption
+		}
+		// Stickers, voice notes, video notes, etc. have neither Text nor
+		// Caption.  Use a placeholder so the agent knows a reply happened
+		// even when it can't see the content.
+		if msg.ReplyToText == "" {
+			msg.ReplyToText = "[media]"
 		}
 		if update.Message.ReplyToMessage.From != nil {
 			msg.ReplyToUserName = strings.TrimSpace(

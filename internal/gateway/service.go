@@ -618,7 +618,7 @@ func (s *Service) runtimeDisplayName() string {
 // msgAttachments converts gateway attachment data into the agent-layer struct.
 // Returns nil if the message has no attachments.
 func msgContext(msg IncomingMessage) *agent.MessageContext {
-	if msg.UserID == "" && msg.UserName == "" && msg.UserUsername == "" && msg.ChatType == "" && msg.ReplyToText == "" {
+	if msg.UserID == "" && msg.UserName == "" && msg.UserUsername == "" && msg.ChatType == "" && msg.ReplyToText == "" && msg.ReplyToUserName == "" {
 		return nil
 	}
 	return &agent.MessageContext{
