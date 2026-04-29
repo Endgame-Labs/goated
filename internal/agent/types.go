@@ -114,10 +114,12 @@ type MessageAttachments struct {
 // UserID/UserName/UserUsername describe who sent the message; ChatType
 // describes whether the conversation is a DM or a group.
 type MessageContext struct {
-	UserID       string // platform user ID (Telegram user ID, Slack user ID)
-	UserName     string // display name (e.g. "Alice Smith")
-	UserUsername string // @handle without the @ (may be empty)
-	ChatType     string // "private", "group", "supergroup", "channel", or ""
+	UserID          string // platform user ID (Telegram user ID, Slack user ID)
+	UserName        string // display name (e.g. "Alice Smith")
+	UserUsername    string // @handle without the @ (may be empty)
+	ChatType        string // "private", "group", "supergroup", "channel", or ""
+	ReplyToText     string // text of the message being replied to (empty if not a reply)
+	ReplyToUserName string // display name of the author of the replied-to message
 }
 
 type SessionRuntime interface {

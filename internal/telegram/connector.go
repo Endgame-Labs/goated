@@ -308,6 +308,18 @@ func (c *Connector) processUpdate(ctx context.Context, handler gateway.Handler, 
 		AttachmentsFailed:    failed,
 		AttachmentsSucceeded: succeeded,
 	}
+	if update.Message.ReplyToMessage != nil {
+		msg.ReplyToText = update.Message.ReplyToMessage.Text
+		// Also check Caption for media messages (photos with captions)
+		if msg.ReplyToText == "" {
+			msg.ReplyToText = update.Message.ReplyToMessage.Caption
+		}
+		if update.Message.ReplyToMessage.From != nil {
+			msg.ReplyToUserName = strings.TrimSpace(
+				update.Message.ReplyToMessage.From.FirstName + " " + update.Message.ReplyToMessage.From.LastName,
+			)
+		}
+	}
 	stopTyping := c.startTypingLoop(ctx, update.Message.Chat.ID)
 	defer stopTyping()
 	return handler.HandleMessage(ctx, msg, c)
