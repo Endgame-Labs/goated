@@ -28,12 +28,12 @@ func TestSessionPromptArgsResumeReadsPromptFromStdin(t *testing.T) {
 
 	got := r.promptArgs("thread-123")
 	want := []string{
-		"exec",
+		"exec", "resume",
 		"--json",
 		"--sandbox", "danger-full-access",
 		"--dangerously-bypass-approvals-and-sandbox",
 		"-c", `model_instructions_file="GOATED.md"`,
-		"resume", "thread-123", "-",
+		"thread-123", "-",
 	}
 
 	if !reflect.DeepEqual(got, want) {
