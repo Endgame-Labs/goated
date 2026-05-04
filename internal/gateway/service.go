@@ -237,7 +237,7 @@ func (s *Service) sendBatchWithRetry(ctx context.Context, channel, chatID string
 		}
 		if !state.SafeIdle() {
 			if state.Kind == agent.SessionStateBlockedAuth || state.Kind == agent.SessionStateBlockedIntervene {
-				return responder.SendMessage(ctx, chatID, s.runtimeDisplayName()+" needs manual intervention: "+state.Summary)
+				return responder.SendMessage(ctx, chatID, s.manualInterventionMessage(state))
 			}
 			return nil
 		}
@@ -339,7 +339,7 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 		}
 		if !state.SafeIdle() {
 			if state.Kind == agent.SessionStateBlockedAuth || state.Kind == agent.SessionStateBlockedIntervene {
-				return responder.SendMessage(ctx, msg.ChatID, s.runtimeDisplayName()+" needs manual intervention: "+state.Summary)
+				return responder.SendMessage(ctx, msg.ChatID, s.manualInterventionMessage(state))
 			}
 			// Unknown/stable states are not errors — runtime may still be working.
 			return nil
@@ -615,6 +615,24 @@ func (s *Service) runtimeDisplayName() string {
 	return s.Session.Descriptor().DisplayName
 }
 
+func (s *Service) manualInterventionMessage(state agent.SessionState) string {
+	name := s.runtimeDisplayName()
+	if state.Kind == agent.SessionStateBlockedAuth || isAuthSummary(state.Summary) {
+		return name + " login expired and needs manual re-auth on the server. Please run /login there, then try again."
+	}
+	return name + " needs manual intervention before it can continue. Check the server session."
+}
+
+func isAuthSummary(summary string) bool {
+	s := strings.ToLower(summary)
+	return strings.Contains(s, "login") ||
+		strings.Contains(s, "sign-in") ||
+		strings.Contains(s, "sign in") ||
+		strings.Contains(s, "api key") ||
+		strings.Contains(s, "authentication") ||
+		strings.Contains(s, "oauth token")
+}
+
 // msgAttachments converts gateway attachment data into the agent-layer struct.
 // Returns nil if the message has no attachments.
 func msgContext(msg IncomingMessage) *agent.MessageContext {
@@ -673,6 +691,9 @@ func (s *Service) friendlyError(err error) string {
 	case strings.Contains(err.Error(), "pane to change"):
 		return "Failed to send your message to " + name + ". The session may be stuck — try /clear."
 	case strings.Contains(err.Error(), "requires manual intervention"):
+		if isAuthSummary(err.Error()) {
+			return name + " login expired and needs manual re-auth on the server. Please run /login there, then try again."
+		}
 		return name + " requires manual intervention before it can continue. Check the server session."
 	case strings.Contains(err.Error(), "unhealthy after"):
 		return name + " session is down and couldn't be auto-restarted. The admin has been notified."

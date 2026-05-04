@@ -80,10 +80,23 @@ func (b *TmuxBridge) IsSessionBusy(ctx context.Context) (bool, error) {
 
 func (b *TmuxBridge) WaitForAwaitingInput(ctx context.Context, timeout time.Duration) (agent.SessionState, error) {
 	deadline := time.Now().Add(timeout)
+	var unknownStableSince time.Time
 	for time.Now().Before(deadline) {
 		state, err := b.GetSessionState(ctx)
-		if err == nil && state.SafeIdle() {
+		if err != nil {
+			return agent.SessionState{}, err
+		}
+		switch state.Kind {
+		case agent.SessionStateAwaitingInput, agent.SessionStateBlockedAuth, agent.SessionStateBlockedIntervene:
 			return state, nil
+		case agent.SessionStateUnknownStable:
+			if unknownStableSince.IsZero() {
+				unknownStableSince = time.Now()
+			} else if time.Since(unknownStableSince) >= 30*time.Second {
+				return state, nil
+			}
+		default:
+			unknownStableSince = time.Time{}
 		}
 		select {
 		case <-ctx.Done():
@@ -318,8 +331,8 @@ func (b *TmuxBridge) GetSessionState(ctx context.Context) (agent.SessionState, e
 		strings.Contains(tail, "OAuth token has expired"),
 		strings.Contains(tail, "authentication_error"):
 		return agent.SessionState{
-			Kind:    agent.SessionStateBlockedIntervene,
-			Summary: "Claude Code requires manual login",
+			Kind:    agent.SessionStateBlockedAuth,
+			Summary: "Claude Code login expired; run /login in the server session",
 		}, nil
 	case snap1 == snap2 && tmux.HasPrompt(snap2):
 		return agent.SessionState{
@@ -387,10 +400,14 @@ func (b *TmuxBridge) GetHealth(ctx context.Context) (agent.HealthStatus, error) 
 			if pat == "API Error: 401" || pat == "authentication_error" || pat == "OAuth token has expired" || pat == "Please run /login" {
 				recoverable = false
 			}
+			summary := fmt.Sprintf("session error: %s", pat)
+			if !recoverable {
+				summary = "Claude Code login expired; run /login in the server session"
+			}
 			return agent.HealthStatus{
 				OK:          false,
 				Recoverable: recoverable,
-				Summary:     fmt.Sprintf("session error: %s", pat),
+				Summary:     summary,
 			}, nil
 		}
 	}

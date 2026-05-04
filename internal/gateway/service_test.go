@@ -230,6 +230,16 @@ func TestFriendlyError_GenericError(t *testing.T) {
 	}
 }
 
+func TestFriendlyError_AuthManualIntervention(t *testing.T) {
+	svc := newTestService()
+	err := errors.New("Claude Code TUI requires manual intervention: Claude Code login expired; run /login in the server session")
+	got := svc.friendlyError(err)
+	want := "Claude Code TUI login expired and needs manual re-auth on the server. Please run /login there, then try again."
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestFriendlyError_WrappedCanceled(t *testing.T) {
 	svc := newTestService()
 	got := svc.friendlyError(context.Canceled)
@@ -268,6 +278,56 @@ func TestTryRecoverAfterIdleTimeout_RestartsDeadRecoverableSession(t *testing.T)
 	}
 	if rt.restartCalls != 1 {
 		t.Fatalf("expected exactly one restart, got %d", rt.restartCalls)
+	}
+}
+
+type blockedAuthRuntime struct{}
+
+func (r *blockedAuthRuntime) Descriptor() agent.RuntimeDescriptor {
+	return agent.RuntimeDescriptor{DisplayName: "Claude Code TUI"}
+}
+func (r *blockedAuthRuntime) EnsureSession(context.Context) error  { return nil }
+func (r *blockedAuthRuntime) StopSession(context.Context) error    { return nil }
+func (r *blockedAuthRuntime) RestartSession(context.Context) error { return nil }
+func (r *blockedAuthRuntime) ResetConversation(context.Context, string) (agent.ResetResult, error) {
+	return agent.ResetResult{}, nil
+}
+func (r *blockedAuthRuntime) SendUserPrompt(context.Context, string, string, string, *agent.MessageAttachments, string, string, *agent.MessageContext) error {
+	return nil
+}
+func (r *blockedAuthRuntime) SendBatchPrompt(context.Context, string, string, []agent.PromptMessage) error {
+	return nil
+}
+func (r *blockedAuthRuntime) SendControlCommand(context.Context, string) error { return nil }
+func (r *blockedAuthRuntime) GetContextEstimate(context.Context, string) (agent.ContextEstimate, error) {
+	return agent.ContextEstimate{}, nil
+}
+func (r *blockedAuthRuntime) GetSessionState(context.Context) (agent.SessionState, error) {
+	return agent.SessionState{Kind: agent.SessionStateBlockedAuth, Summary: "Claude Code login expired; run /login in the server session"}, nil
+}
+func (r *blockedAuthRuntime) WaitForAwaitingInput(context.Context, time.Duration) (agent.SessionState, error) {
+	return agent.SessionState{}, errors.New("timed out waiting for Claude session to become idle")
+}
+func (r *blockedAuthRuntime) GetHealth(context.Context) (agent.HealthStatus, error) {
+	return agent.HealthStatus{OK: false, Recoverable: false, Summary: "Claude Code login expired; run /login in the server session"}, nil
+}
+func (r *blockedAuthRuntime) DetectRetryableError(context.Context) string { return "" }
+func (r *blockedAuthRuntime) Version(context.Context) string              { return "" }
+
+func TestTryRecoverAfterIdleTimeout_ReturnsAuthErrorImmediately(t *testing.T) {
+	rt := &blockedAuthRuntime{}
+	svc := &Service{Session: rt}
+
+	recovered, err := svc.tryRecoverAfterIdleTimeout(context.Background(), "", "chat-1", errors.New("timed out waiting for Claude session to become idle"))
+	if err == nil {
+		t.Fatal("expected auth blocker error")
+	}
+	if recovered {
+		t.Fatal("did not expect recovery on auth blocker")
+	}
+	want := "Claude Code TUI requires manual intervention: Claude Code login expired; run /login in the server session"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err.Error(), want)
 	}
 }
 
