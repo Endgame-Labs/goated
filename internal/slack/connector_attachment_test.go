@@ -14,8 +14,8 @@ func TestIsAllowedByMetadata(t *testing.T) {
 	if !isAllowedByMetadata("sheet.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
 		t.Fatal("expected xlsx to be allowed")
 	}
-	if isAllowedByMetadata("archive.zip", "application/zip") {
-		t.Fatal("expected zip to be rejected")
+	if !isAllowedByMetadata("archive.zip", "application/zip") {
+		t.Fatal("expected zip to be allowed")
 	}
 }
 

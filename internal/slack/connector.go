@@ -46,6 +46,8 @@ var allowedAttachmentMIMEs = map[string]struct{}{
 	"application/vnd.ms-excel":                         {},
 	"application/vnd.ms-excel.sheet.macroenabled.12":   {},
 	"application/vnd.ms-word.document.macroenabled.12": {},
+	"application/zip":                                  {},
+	"application/x-zip-compressed":                     {},
 }
 
 var allowedAttachmentExts = map[string]struct{}{
@@ -62,6 +64,7 @@ var allowedAttachmentExts = map[string]struct{}{
 	".xlsx": {},
 	".docx": {},
 	".pdf":  {},
+	".zip":  {},
 }
 
 // OffsetStore persists metadata so restarts can track state.
@@ -303,8 +306,8 @@ func (c *Connector) handleEventsAPI(ctx context.Context, handler gateway.Handler
 		return
 	}
 
-	// Post a thinking indicator while processing
-	c.postThinking(msg.ChatID)
+	// Post a thinking indicator while processing (in-thread if message was threaded)
+	c.postThinking(msg.ChatID, msg.ThreadID)
 
 	if err := handler.HandleMessage(ctx, msg, c); err != nil {
 		_ = c.SendMessage(ctx, msg.ChatID, "Error: "+err.Error())
@@ -326,8 +329,8 @@ func (c *Connector) handleBatchEventsAPI(ctx context.Context, handler gateway.Ha
 		return
 	}
 
-	// Post a thinking indicator
-	c.postThinking(msgs[0].ChatID)
+	// Post a thinking indicator (in-thread if message was threaded)
+	c.postThinking(msgs[0].ChatID, msgs[0].ThreadID)
 
 	fmt.Fprintf(os.Stderr, "[%s] batching %d queued messages\n",
 		time.Now().Format(time.RFC3339), len(msgs))
@@ -555,11 +558,11 @@ func (c *Connector) UpdateMessage(_ context.Context, channelID, messageTS, text 
 	return nil
 }
 
-// postThinking posts a "_thinking..._" message and records its timestamp
+// postThinking posts a "_thinking..._" indicator and records its timestamp
 // so it can be updated with the real response or deleted later.
-// Skips posting if a thinking indicator is already active (e.g. queued messages).
-// Also spawns a TTL reaper to guarantee cleanup even if normal paths fail.
-func (c *Connector) postThinking(channel string) {
+// If threadTS is non-empty, posts in that thread. Skips posting if a
+// thinking indicator is already active.
+func (c *Connector) postThinking(channel, threadTS string) {
 	c.mu.Lock()
 	if c.thinkingTS != "" {
 		c.mu.Unlock()
@@ -567,9 +570,14 @@ func (c *Connector) postThinking(channel string) {
 	}
 	c.mu.Unlock()
 
-	_, ts, err := c.api.PostMessage(channel,
+	opts := []slack.MsgOption{
 		slack.MsgOptionText("_thinking..._", false),
-	)
+	}
+	if threadTS != "" {
+		opts = append(opts, slack.MsgOptionTS(threadTS))
+	}
+
+	_, ts, err := c.api.PostMessage(channel, opts...)
 	if err != nil {
 		return
 	}
@@ -577,6 +585,7 @@ func (c *Connector) postThinking(channel string) {
 	c.thinkingTS = ts
 	c.mu.Unlock()
 	_ = WriteThinkingTS(ts)
+
 	go reapThinkingIndicator(c.api, channel, ts)
 }
 
@@ -1019,10 +1028,28 @@ func (c *Connector) cleanupExpiredAttachments() {
 	)
 }
 
+func isTextLikeMIME(mime string) bool {
+	if strings.HasPrefix(mime, "text/") {
+		return true
+	}
+	switch mime {
+	case "application/json", "application/x-ndjson",
+		"application/yaml", "application/x-yaml",
+		"application/toml", "application/x-toml",
+		"application/xml", "application/javascript",
+		"application/typescript":
+		return true
+	}
+	return false
+}
+
 func isAllowedByMetadata(filename, mime string) bool {
 	mime = strings.ToLower(strings.TrimSpace(mime))
 	ext := normalizedAttachmentExt(filename)
 	if strings.HasPrefix(mime, "image/") {
+		return true
+	}
+	if isTextLikeMIME(mime) {
 		return true
 	}
 	if _, ok := allowedAttachmentMIMEs[mime]; ok {
@@ -1048,8 +1075,15 @@ func isAllowedByContent(filename, mime, detected string) bool {
 		mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
 		return detected == "application/zip" || detected == "application/octet-stream"
 	}
+	if ext == ".zip" || mime == "application/zip" || mime == "application/x-zip-compressed" {
+		return detected == "application/zip" || detected == "application/octet-stream"
+	}
 	if ext == ".csv" || ext == ".tsv" || mime == "text/csv" || mime == "text/tab-separated-values" || mime == "application/csv" {
 		return strings.HasPrefix(detected, "text/plain") || detected == "application/octet-stream"
+	}
+	if isTextLikeMIME(mime) {
+		return strings.HasPrefix(detected, "text/") || detected == "application/octet-stream" ||
+			detected == "application/json" || detected == "application/xml"
 	}
 	if _, ok := allowedAttachmentMIMEs[mime]; ok {
 		return detected == mime || detected == "application/octet-stream"

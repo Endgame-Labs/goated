@@ -7,6 +7,24 @@ import (
 	"github.com/slack-go/slack"
 )
 
+// RawBlock is a passthrough for block types not yet supported by slack-go
+// (e.g. the new "markdown" block). It implements slack.Block and marshals
+// back to the original JSON.
+type RawBlock struct {
+	RawType string
+	Raw     json.RawMessage
+}
+
+func (b *RawBlock) BlockType() slack.MessageBlockType {
+	return slack.MessageBlockType(b.RawType)
+}
+
+func (b *RawBlock) ID() string { return "" }
+
+func (b *RawBlock) MarshalJSON() ([]byte, error) {
+	return b.Raw, nil
+}
+
 // Header returns a header block with the given plain text.
 func Header(text string) *slack.HeaderBlock {
 	return slack.NewHeaderBlock(
@@ -144,7 +162,8 @@ func ParseBlocksJSON(data []byte) ([]slack.Block, string, error) {
 			}
 			block = &b
 		default:
-			return nil, "", fmt.Errorf("blockkit: block %d: unsupported type %q", i, peek.Type)
+			// For unknown/new block types (e.g. "markdown"), pass through as raw JSON.
+			block = &RawBlock{RawType: peek.Type, Raw: r}
 		}
 		blocks = append(blocks, block)
 	}

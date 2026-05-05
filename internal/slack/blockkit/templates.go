@@ -25,6 +25,12 @@ type AlertItem struct {
 	Detail  string
 }
 
+// EscapeTime wraps a time string in backticks so Slack's mobile client
+// does not interpret ":00" as an emoji shortcode (which eats the colon).
+func EscapeTime(t string) string {
+	return "`" + t + "`"
+}
+
 // DailyPrepMessage builds a Block Kit message for a daily prep briefing.
 // Returns the blocks and a plain-text fallback string.
 func DailyPrepMessage(heading string, schedule string, tasks []TaskItem, commands string) ([]slack.Block, string) {
