@@ -73,7 +73,6 @@ func (s *SessionRuntime) EnsureSession(ctx context.Context) error {
 		if err := tmux.Run(ctx, "new-session", "-d", "-s", session, cmd); err != nil {
 			return fmt.Errorf("start codex tmux session: %w", err)
 		}
-		tmux.InvalidateTargetCache(session)
 	}
 	return s.waitForReady(ctx, 25*time.Second)
 }
@@ -225,6 +224,11 @@ func (s *SessionRuntime) GetSessionState(ctx context.Context) (agent.SessionStat
 			Kind:    agent.SessionStateBlockedAuth,
 			Summary: "Codex requires sign-in or API key setup",
 		}, nil
+	case isUpdatePrompt(clean2):
+		return agent.SessionState{
+			Kind:    agent.SessionStateBlockedIntervene,
+			Summary: "Codex update prompt is blocking startup",
+		}, nil
 	case isBlockedIntervention(clean2):
 		return agent.SessionState{
 			Kind:    agent.SessionStateBlockedIntervene,
@@ -300,6 +304,12 @@ func (s *SessionRuntime) GetHealth(ctx context.Context) (agent.HealthStatus, err
 			Recoverable: false,
 			Summary:     "Codex requires sign-in or API key setup",
 		}, nil
+	case isUpdatePrompt(clean):
+		return agent.HealthStatus{
+			OK:          false,
+			Recoverable: true,
+			Summary:     "Codex update prompt is blocking startup",
+		}, nil
 	case isBlockedIntervention(clean):
 		return agent.HealthStatus{
 			OK:          false,
@@ -351,11 +361,15 @@ func (s *SessionRuntime) waitForReady(ctx context.Context, timeout time.Duration
 	deadline := time.Now().Add(timeout)
 	var last string
 	stableCount := 0
+	autoSkippedUpdate := false
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+		if !tmux.SessionExistsFor(ctx, s.sessionName()) {
+			return fmt.Errorf("Codex exited during bootstrap (tmux session disappeared)")
 		}
 		out, err := tmux.CaptureVisibleFor(ctx, s.sessionName())
 		if err != nil {
@@ -366,6 +380,18 @@ func (s *SessionRuntime) waitForReady(ctx context.Context, timeout time.Duration
 		switch {
 		case isBlockedAuth(clean):
 			return fmt.Errorf("Codex requires sign-in or API key setup")
+		case isUpdatePrompt(clean):
+			if !autoSkippedUpdate {
+				if err := s.dismissUpdatePrompt(ctx); err != nil {
+					return err
+				}
+				autoSkippedUpdate = true
+				last = ""
+				stableCount = 0
+				time.Sleep(700 * time.Millisecond)
+				continue
+			}
+			return fmt.Errorf("Codex update prompt is blocking startup")
 		case isBlockedIntervention(clean):
 			return fmt.Errorf("Codex is waiting for manual intervention")
 		case clean == "":
@@ -375,7 +401,7 @@ func (s *SessionRuntime) waitForReady(ctx context.Context, timeout time.Duration
 
 		if clean == last {
 			stableCount++
-			if stableCount >= 2 {
+			if stableCount >= 2 && readyPromptRe.MatchString(clean) {
 				return nil
 			}
 		} else {
@@ -383,6 +409,12 @@ func (s *SessionRuntime) waitForReady(ctx context.Context, timeout time.Duration
 			stableCount = 0
 		}
 		time.Sleep(500 * time.Millisecond)
+	}
+	if !tmux.SessionExistsFor(ctx, s.sessionName()) {
+		return fmt.Errorf("Codex exited during bootstrap (tmux session disappeared)")
+	}
+	if last != "" {
+		return fmt.Errorf("timed out waiting for Codex session readiness; last screen: %s", summarizeStartupScreen(last))
 	}
 	return fmt.Errorf("timed out waiting for Codex session readiness")
 }
@@ -454,6 +486,49 @@ func isBlockedIntervention(s string) bool {
 		}
 	}
 	return false
+}
+
+func isUpdatePrompt(s string) bool {
+	lower := strings.ToLower(s)
+	return (strings.Contains(lower, "update now") && strings.Contains(lower, "skip")) ||
+		(strings.Contains(lower, "new version") && strings.Contains(lower, "skip")) ||
+		(strings.Contains(lower, "update available") && strings.Contains(lower, "skip"))
+}
+
+func (s *SessionRuntime) dismissUpdatePrompt(ctx context.Context) error {
+	for _, keys := range dismissUpdatePromptKeys() {
+		if err := tmux.SendKeysFor(ctx, s.sessionName(), keys...); err != nil {
+			return fmt.Errorf("dismiss Codex update prompt: %w", err)
+		}
+		time.Sleep(250 * time.Millisecond)
+		out, err := tmux.CaptureVisibleFor(ctx, s.sessionName())
+		if err == nil && !isUpdatePrompt(util.CleanTerminalText(out)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("dismiss Codex update prompt: prompt remained visible after retrying")
+}
+
+func dismissUpdatePromptKeys() [][]string {
+	return [][]string{
+		{"Down", "Enter"},
+		{"Down", "Down", "Enter"},
+		{"Tab", "Enter"},
+		{"Right", "Enter"},
+		{"Escape"},
+	}
+}
+
+func summarizeStartupScreen(s string) string {
+	s = strings.TrimSpace(lastLines(s, 6))
+	if s == "" {
+		return "empty screen"
+	}
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 180 {
+		return s[:177] + "..."
+	}
+	return s
 }
 
 func fileExists(path string) bool {

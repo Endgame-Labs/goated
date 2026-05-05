@@ -158,6 +158,12 @@ func RunOutput(ctx context.Context, args ...string) (string, error) {
 	return runOutput(ctx, args...)
 }
 
+// SendKeysFor sends raw tmux key names to the given session pane.
+func SendKeysFor(ctx context.Context, session string, keys ...string) error {
+	args := append([]string{"send-keys", "-t", targetForSession(session)}, keys...)
+	return run(ctx, args...)
+}
+
 // waitForVisibleChange polls until the visible pane differs from before.
 func waitForVisibleChange(ctx context.Context, session, before string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
