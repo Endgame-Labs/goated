@@ -363,6 +363,7 @@ func slackAppManifest(displayName string) string {
 					"channels:read",
 					"chat:write",
 					"files:read",
+					"files:write",
 					"im:history",
 					"im:read",
 					"im:write",
