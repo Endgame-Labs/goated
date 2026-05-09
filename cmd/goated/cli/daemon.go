@@ -37,6 +37,12 @@ type restartRecord struct {
 
 const maxReplayAge = 1 * time.Hour
 
+const (
+	subagentDrainTimeout     = 90 * time.Second
+	daemonStopTimeout        = 90 * time.Second
+	daemonStopProgressPeriod = 15 * time.Second
+)
+
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
 	Short: "Manage the goated daemon",
@@ -739,7 +745,8 @@ func waitForSubagents(store *db.Store) {
 		fmt.Printf("  pid=%d source=%s log=%s\n", r.PID, r.Source, r.LogPath)
 	}
 
-	deadline := time.Now().Add(3 * time.Minute)
+	deadline := time.Now().Add(subagentDrainTimeout)
+	nextProgress := time.Now().Add(daemonStopProgressPeriod)
 	for time.Now().Before(deadline) {
 		allDone := true
 		for _, r := range alive {
@@ -756,13 +763,18 @@ func waitForSubagents(store *db.Store) {
 			fmt.Println("All subagents finished.")
 			return
 		}
+		if time.Now().After(nextProgress) {
+			remaining := time.Until(deadline).Round(time.Second)
+			fmt.Printf("Still waiting on subagents (%s remaining before restart continues)...\n", remaining)
+			nextProgress = time.Now().Add(daemonStopProgressPeriod)
+		}
 		time.Sleep(2 * time.Second)
 	}
-	fmt.Fprintln(os.Stderr, "Subagent wait timeout (3m), proceeding with restart.")
+	fmt.Fprintf(os.Stderr, "Subagent wait timeout (%s), proceeding with restart.\n", subagentDrainTimeout)
 }
 
-// stopDaemon sends SIGTERM and waits for the process to exit (up to 3 minutes
-// to allow in-flight messages to flush). Returns the old PID (0 if none).
+// stopDaemon sends SIGTERM and waits for the process to exit with bounded
+// escalation. Returns the old PID (0 if none).
 func stopDaemon(pidPath string) (int, error) {
 	pid, running := readPID(pidPath)
 	if !running {
@@ -781,17 +793,24 @@ func stopDaemon(pidPath string) (int, error) {
 
 	fmt.Printf("Sent SIGTERM to daemon (pid=%d), waiting for in-flight messages to flush...\n", pid)
 
-	// Wait up to 3 minutes for graceful exit (allows message flush)
-	for i := 0; i < 1800; i++ {
+	// Wait up to daemonStopTimeout for graceful exit (allows message flush).
+	deadline := time.Now().Add(daemonStopTimeout)
+	nextProgress := time.Now().Add(daemonStopProgressPeriod)
+	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
 		if err := proc.Signal(syscall.Signal(0)); err != nil {
 			_ = os.Remove(pidPath)
 			return pid, nil
 		}
+		if time.Now().After(nextProgress) {
+			remaining := time.Until(deadline).Round(time.Second)
+			fmt.Printf("Daemon still stopping (pid=%d, %s remaining before force kill)...\n", pid, remaining)
+			nextProgress = time.Now().Add(daemonStopProgressPeriod)
+		}
 	}
 
-	// Force kill if still alive after 3 minutes
-	fmt.Fprintf(os.Stderr, "Daemon (pid=%d) didn't stop after 3m, sending SIGKILL\n", pid)
+	// Force kill if still alive after the timeout.
+	fmt.Fprintf(os.Stderr, "Daemon (pid=%d) didn't stop after %s, sending SIGKILL\n", pid, daemonStopTimeout)
 	_ = proc.Signal(syscall.SIGKILL)
 	time.Sleep(200 * time.Millisecond)
 	_ = os.Remove(pidPath)
