@@ -62,4 +62,31 @@ func TestBlockedStateDetection(t *testing.T) {
 	if isBlockedIntervention("idle at prompt") {
 		t.Fatal("did not expect intervention blocker on idle output")
 	}
+	if !isUpdatePrompt("A new version is available\nUpdate now\nSkip") {
+		t.Fatal("expected update prompt to be detected")
+	}
+	if isUpdatePrompt("normal prompt output") {
+		t.Fatal("did not expect update prompt on normal output")
+	}
+}
+
+func TestSummarizeStartupScreen(t *testing.T) {
+	t.Parallel()
+
+	got := summarizeStartupScreen("line1\nline2\nline3\nline4\nline5\nline6\nline7")
+	if got != "line2 line3 line4 line5 line6 line7" {
+		t.Fatalf("unexpected summary: %q", got)
+	}
+}
+
+func TestDismissUpdatePromptKeys(t *testing.T) {
+	t.Parallel()
+
+	got := dismissUpdatePromptKeys()
+	if len(got) == 0 {
+		t.Fatal("expected at least one dismissal key sequence")
+	}
+	if len(got[0]) != 2 || got[0][0] != "Down" || got[0][1] != "Enter" {
+		t.Fatalf("first dismissal sequence = %v, want [Down Enter]", got[0])
+	}
 }
