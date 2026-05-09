@@ -224,6 +224,10 @@ var daemonRunCmd = &cobra.Command{
 			}
 			responder = conn
 
+			// Wire interactive event router (buttons, menus) into the connector.
+			iRouter := slackpkg.NewInteractionRouter(conn, svc)
+			conn.SetInteractionHandler(iRouter.Handle)
+
 			runner := &cronpkg.Runner{
 				Store:        store,
 				WorkspaceDir: cfg.WorkspaceDir,
@@ -316,15 +320,16 @@ var daemonRunCmd = &cobra.Command{
 }
 
 type daemonSendRequest struct {
-	RequestID string `json:"request_id"`
-	ChatID    string `json:"chat_id"`
-	ThreadTS  string `json:"thread_ts,omitempty"`
-	Text      string `json:"text,omitempty"`
-	FilePath  string `json:"file_path,omitempty"`
-	Caption   string `json:"caption,omitempty"`
-	MediaType string `json:"media_type,omitempty"`
-	Source    string `json:"source,omitempty"`
-	LogPath   string `json:"log_path,omitempty"`
+	RequestID  string          `json:"request_id"`
+	ChatID     string          `json:"chat_id"`
+	ThreadTS   string          `json:"thread_ts,omitempty"`
+	Text       string          `json:"text,omitempty"`
+	FilePath   string          `json:"file_path,omitempty"`
+	Caption    string          `json:"caption,omitempty"`
+	MediaType  string          `json:"media_type,omitempty"`
+	Source     string          `json:"source,omitempty"`
+	LogPath    string          `json:"log_path,omitempty"`
+	BlocksJSON json.RawMessage `json:"blocks_json,omitempty"`
 }
 
 type daemonSendResponse struct {
@@ -418,12 +423,12 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 	if req.RequestID != "" {
 		ctx = msglog.WithRequestID(ctx, req.RequestID)
 	}
-	if req.Text == "" && req.FilePath == "" {
-		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: "text or file_path is required"})
+	if req.Text == "" && req.FilePath == "" && len(req.BlocksJSON) == 0 {
+		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: "text, file_path, or blocks_json is required"})
 		return
 	}
-	if req.Text != "" && req.FilePath != "" {
-		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: "text and file_path are mutually exclusive"})
+	if req.FilePath != "" && (req.Text != "" || len(req.BlocksJSON) > 0) {
+		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: "file_path is mutually exclusive with text/blocks_json"})
 		return
 	}
 
@@ -450,6 +455,15 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 			sendErr = fmt.Errorf("gateway %s does not support outbound media yet", gatewayName)
 		} else {
 			sendErr = mediaResponder.SendMedia(ctx, req.ChatID, req.FilePath, req.Caption, req.MediaType)
+		}
+	} else if len(req.BlocksJSON) > 0 {
+		blockResponder, ok := responder.(gateway.BlockResponder)
+		if !ok {
+			sendErr = fmt.Errorf("gateway %s does not support block messages", gatewayName)
+		} else if req.ThreadTS != "" {
+			sendErr = blockResponder.SendThreadBlockMessage(ctx, req.ChatID, req.ThreadTS, req.Text, req.BlocksJSON)
+		} else {
+			sendErr = blockResponder.SendBlockMessage(ctx, req.ChatID, req.Text, req.BlocksJSON)
 		}
 	} else if req.ThreadTS != "" {
 		threadedResponder, ok := responder.(gateway.ThreadedResponder)
