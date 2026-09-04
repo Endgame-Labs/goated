@@ -24,6 +24,7 @@ var validClaudeModels = map[string]bool{
 	"claude-opus-5": true, "claude-opus-5[1m]": true,
 	"claude-sonnet-5": true, "claude-sonnet-5[1m]": true,
 	"claude-fable-5": true, "claude-fable-5[1m]": true,
+	"claude-fable-5-1": true, "claude-fable-5-1[1m]": true,
 	"claude-mythos-5": true, "claude-mythos-5[1m]": true,
 	"claude-opus-4-8": true, "claude-sonnet-4-8": true,
 	"claude-opus-4-8[1m]": true, "claude-sonnet-4-8[1m]": true,
