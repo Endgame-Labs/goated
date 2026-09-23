@@ -123,7 +123,7 @@ func PasteAndEnterFor(ctx context.Context, session, text string) error {
 	for attempt := 0; attempt < 3; attempt++ {
 		time.Sleep(2 * time.Second)
 		out, err := CaptureVisibleFor(ctx, session)
-		if err != nil || !(hasCollapsedPastePlaceholder(out) || hasUnsubmittedInput(out)) {
+		if err != nil || !(hasCollapsedPastePlaceholder(out) || hasUnsubmittedInput(out, text)) {
 			return nil
 		}
 		if err := run(ctx, "send-keys", "-t", targetForSession(session), "Enter"); err != nil {
@@ -273,8 +273,10 @@ func hasCollapsedPastePlaceholder(paneOutput string) bool {
 }
 
 // hasUnsubmittedInput reports whether Claude Code's input box (the lines
-// between the last two horizontal rules) still holds text after the ❯.
-func hasUnsubmittedInput(paneOutput string) bool {
+// between the last two horizontal rules) still holds lines of the pasted text.
+// Matching against the text matters: an empty box can show a dimmed prompt
+// suggestion, and pressing Enter on that would send it.
+func hasUnsubmittedInput(paneOutput, text string) bool {
 	lines := strings.Split(paneOutput, "\n")
 	var rules []int
 	for i, line := range lines {
@@ -286,15 +288,25 @@ func hasUnsubmittedInput(paneOutput string) bool {
 		return false
 	}
 	box := lines[rules[len(rules)-2]+1 : rules[len(rules)-1]]
-	if len(box) == 0 {
+	if len(box) == 0 || !strings.HasPrefix(strings.TrimSpace(box[0]), "❯") {
 		return false
 	}
-	first := strings.TrimSpace(box[0])
-	if !strings.HasPrefix(first, "❯") {
-		return false
+	pasted := make(map[string]bool)
+	for _, line := range strings.Split(text, "\n") {
+		if line = strings.TrimSpace(line); len(line) >= 3 {
+			pasted[line] = true
+		}
 	}
-	box[0] = strings.TrimPrefix(first, "❯")
-	return strings.TrimSpace(strings.Join(box, "")) != ""
+	for i, line := range box {
+		line = strings.TrimSpace(line)
+		if i == 0 {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "❯"))
+		}
+		if pasted[line] {
+			return true
+		}
+	}
+	return false
 }
 
 func isHorizontalRule(line string) bool {
