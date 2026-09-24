@@ -117,10 +117,15 @@ func PasteAndEnterFor(ctx context.Context, session, text string) error {
 		return fmt.Errorf("send enter: %w", err)
 	}
 
-	// Claude Code can sometimes collapse a bulk paste into a placeholder before
-	// it actually submits. Do one delayed check and press Enter again if needed.
-	time.Sleep(3 * time.Second)
-	if out, err := CaptureVisibleFor(ctx, session); err == nil && hasCollapsedPastePlaceholder(out) {
+	// Claude Code sometimes drops the Enter: it collapses a bulk paste into a
+	// placeholder, or leaves the pasted text sitting in the input box. Check a
+	// few times and press Enter again while the message is still unsent.
+	for attempt := 0; attempt < 3; attempt++ {
+		time.Sleep(2 * time.Second)
+		out, err := CaptureVisibleFor(ctx, session)
+		if err != nil || !(hasCollapsedPastePlaceholder(out) || hasUnsubmittedInput(out, text)) {
+			return nil
+		}
 		if err := run(ctx, "send-keys", "-t", targetForSession(session), "Enter"); err != nil {
 			return fmt.Errorf("send retry enter: %w", err)
 		}
@@ -265,6 +270,48 @@ func HasPrompt(paneOutput string) bool {
 
 func hasCollapsedPastePlaceholder(paneOutput string) bool {
 	return strings.Contains(paneOutput, "Pasted text")
+}
+
+// hasUnsubmittedInput reports whether Claude Code's input box (the lines
+// between the last two horizontal rules) still holds lines of the pasted text.
+// Matching against the text matters: an empty box can show a dimmed prompt
+// suggestion, and pressing Enter on that would send it.
+func hasUnsubmittedInput(paneOutput, text string) bool {
+	lines := strings.Split(paneOutput, "\n")
+	var rules []int
+	for i, line := range lines {
+		if isHorizontalRule(line) {
+			rules = append(rules, i)
+		}
+	}
+	if len(rules) < 2 {
+		return false
+	}
+	box := lines[rules[len(rules)-2]+1 : rules[len(rules)-1]]
+	if len(box) == 0 || !strings.HasPrefix(strings.TrimSpace(box[0]), "❯") {
+		return false
+	}
+	pasted := make(map[string]bool)
+	for _, line := range strings.Split(text, "\n") {
+		if line = strings.TrimSpace(line); len(line) >= 3 {
+			pasted[line] = true
+		}
+	}
+	for i, line := range box {
+		line = strings.TrimSpace(line)
+		if i == 0 {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "❯"))
+		}
+		if pasted[line] {
+			return true
+		}
+	}
+	return false
+}
+
+func isHorizontalRule(line string) bool {
+	line = strings.TrimSpace(line)
+	return strings.Count(line, "─") >= 20 && strings.Trim(line, "─") == ""
 }
 
 // API/transport error patterns that indicate a failed request (retryable).
