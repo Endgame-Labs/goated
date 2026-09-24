@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"goated/internal/agent"
@@ -21,6 +22,24 @@ type TmuxBridge struct {
 	WorkspaceDir string
 	LogDir       string
 	SessionName  string
+
+	// authProbe overrides the headless auth probe (tests); nil means
+	// runClaudeAuthProbe. probeRunMu serializes probe execution; probeMu
+	// guards only the cached verdict and is never held across a probe.
+	// nowFn overrides the clock for TTL tests; nil means time.Now.
+	authProbe    func(ctx context.Context, workspaceDir string) authProbeResult
+	nowFn        func() time.Time
+	probeRunMu   sync.Mutex
+	probeMu      sync.Mutex
+	probeVerdict authProbeResult
+	probeExpiry  time.Time
+}
+
+func (b *TmuxBridge) now() time.Time {
+	if b.nowFn != nil {
+		return b.nowFn()
+	}
+	return time.Now()
 }
 
 func NewSessionRuntime(workspaceDir, logDir string) *TmuxBridge {
@@ -87,7 +106,20 @@ func (b *TmuxBridge) WaitForAwaitingInput(ctx context.Context, timeout time.Dura
 			return agent.SessionState{}, err
 		}
 		switch state.Kind {
-		case agent.SessionStateAwaitingInput, agent.SessionStateBlockedAuth, agent.SessionStateBlockedIntervene:
+		case agent.SessionStateBlockedAuth:
+			// A dispatch can poll here far longer than one probe-verdict
+			// TTL (the gateway chains retry windows after a single
+			// GetHealth), so an apparent auth block may just be the cached
+			// verdict expiring while stale auth text is on screen.
+			// Re-verify before surfacing it: a passing probe re-arms the
+			// cache and the next poll classifies normally.
+			resolved, retry := resolveBlockedAuth(state, b.verifyBlockedAuth(ctx))
+			if retry {
+				unknownStableSince = time.Time{}
+				break
+			}
+			return resolved, nil
+		case agent.SessionStateAwaitingInput, agent.SessionStateBlockedIntervene:
 			return state, nil
 		case agent.SessionStateUnknownStable:
 			if unknownStableSince.IsZero() {
@@ -105,6 +137,23 @@ func (b *TmuxBridge) WaitForAwaitingInput(ctx context.Context, timeout time.Dura
 		}
 	}
 	return agent.SessionState{}, fmt.Errorf("timed out waiting for Claude session to become idle")
+}
+
+// resolveBlockedAuth converts the live probe result into a state callers may
+// safely act on. retry=true means the pane text was disproved and polling can
+// continue. Only an explicit auth failure preserves BlockedAuth.
+func resolveBlockedAuth(blocked agent.SessionState, verdict authProbeResult) (resolved agent.SessionState, retry bool) {
+	switch verdict {
+	case authProbeOK:
+		return agent.SessionState{}, true
+	case authProbeFailed:
+		return blocked, false
+	default:
+		return agent.SessionState{
+			Kind:    agent.SessionStateUnknownStable,
+			Summary: "pane shows auth error text, but live auth verification was inconclusive",
+		}, false
+	}
 }
 
 func (b *TmuxBridge) EnsureSession(ctx context.Context) error {
@@ -153,6 +202,7 @@ func (b *TmuxBridge) ClearSession(ctx context.Context, _ string) error {
 }
 
 func (b *TmuxBridge) ResetConversation(ctx context.Context, _ string) (agent.ResetResult, error) {
+	b.invalidateAuthProbe()
 	_ = os.Remove(b.sessionIDPath())
 	if err := b.StopSession(ctx); err != nil {
 		return agent.ResetResult{}, err
@@ -325,30 +375,40 @@ func (b *TmuxBridge) GetSessionState(ctx context.Context) (agent.SessionState, e
 		}, nil
 	}
 
+	return b.classifySessionState(snap1, snap2), nil
+}
+
+// classifySessionState turns two pane snapshots taken 2s apart into a
+// session state. Split from GetSessionState so the classification — in
+// particular the auth gate — is testable without a live tmux server.
+func (b *TmuxBridge) classifySessionState(snap1, snap2 string) agent.SessionState {
 	tail := lastLines(snap2, 20)
 	switch {
-	case strings.Contains(tail, "Please run /login"),
-		strings.Contains(tail, "OAuth token has expired"),
-		strings.Contains(tail, "authentication_error"):
+	// Auth-error text in the pane may be stale transcript output from a
+	// since-resolved incident. Suppress BlockedAuth when a recent headless
+	// probe (run by GetHealth, which gates dispatch) proved credentials work.
+	// The probe is authoritative across OAuth refresh, Keychain, and API-key
+	// auth; this polling hot path never probes by itself.
+	case matchPattern(tail, authErrorPatterns) != "" && b.cachedAuthState() != authProbeOK:
 		return agent.SessionState{
 			Kind:    agent.SessionStateBlockedAuth,
 			Summary: "Claude Code login expired; run /login in the server session",
-		}, nil
+		}
 	case snap1 == snap2 && tmux.HasPrompt(snap2):
 		return agent.SessionState{
 			Kind:    agent.SessionStateAwaitingInput,
 			Summary: "idle at prompt",
-		}, nil
+		}
 	case snap1 == snap2:
 		return agent.SessionState{
 			Kind:    agent.SessionStateUnknownStable,
 			Summary: "pane is stable without a prompt",
-		}, nil
+		}
 	default:
 		return agent.SessionState{
 			Kind:    agent.SessionStateGenerating,
 			Summary: "processing",
-		}, nil
+		}
 	}
 }
 
@@ -384,43 +444,106 @@ func (b *TmuxBridge) GetHealth(ctx context.Context) (agent.HealthStatus, error) 
 		}, nil
 	}
 
-	tail := lastLines(snap, 20)
-	errorPatterns := []string{
-		"API Error: 401",
-		"authentication_error",
-		"OAuth token has expired",
-		"Please run /login",
-		"API Error: 403",
-		"overloaded_error",
-		"Could not connect",
-	}
-	for _, pat := range errorPatterns {
+	return b.healthFromSnapshot(ctx, snap), nil
+}
+
+// healthFromSnapshot classifies a captured pane. Split from GetHealth so the
+// full wiring — pane tail, on-disk credentials lookup, and lazy auth probe —
+// is testable without a live tmux server.
+func (b *TmuxBridge) healthFromSnapshot(ctx context.Context, snap string) agent.HealthStatus {
+	return healthFromPaneTail(lastLines(snap, 20), oauthCredentialsState(time.Now()), func() authProbeResult {
+		return b.verifiedAuthState(ctx)
+	})
+}
+
+// authErrorPatterns are pane strings indicating the Claude session hit an
+// auth failure at some point. The TUI transcript keeps rendering them long
+// after the underlying incident is over, so a match alone must not be
+// treated as the current state — see healthFromPaneTail.
+var authErrorPatterns = []string{
+	"API Error: 401",
+	"authentication_error",
+	"OAuth token has expired",
+	"Please run /login",
+}
+
+// recoverableErrorPatterns are transient failures a session restart can clear.
+var recoverableErrorPatterns = []string{
+	"API Error: 403",
+	"overloaded_error",
+	"Could not connect",
+}
+
+func matchPattern(tail string, patterns []string) string {
+	for _, pat := range patterns {
 		if strings.Contains(tail, pat) {
-			recoverable := true
-			if pat == "API Error: 401" || pat == "authentication_error" || pat == "OAuth token has expired" || pat == "Please run /login" {
-				recoverable = false
-			}
-			summary := fmt.Sprintf("session error: %s", pat)
-			if !recoverable {
-				summary = "Claude Code login expired; run /login in the server session"
-			}
-			return agent.HealthStatus{
-				OK:          false,
-				Recoverable: recoverable,
-				Summary:     summary,
-			}, nil
+			return pat
 		}
 	}
+	return ""
+}
 
+// healthFromPaneTail classifies session health from the last rendered pane
+// lines. Auth-error text alone is not trusted as "login expired": stale
+// error output from a since-resolved incident stays on screen indefinitely,
+// and treating it as current state has crash-looped daemons whose
+// credentials were long since valid again. verifyAuth is a cached real request,
+// so it is authoritative even when an OAuth access token needs refreshing or
+// credentials live in macOS Keychain/API-key environment state. Probe OK means
+// the text is provably stale; probe failure means login really is required.
+// An inconclusive probe remains recoverable rather than converting ambiguous
+// local credential metadata into a false manual-login requirement.
+func healthFromPaneTail(tail string, creds credentialsState, verifyAuth func() authProbeResult) agent.HealthStatus {
+	if pat := matchPattern(tail, authErrorPatterns); pat != "" {
+		switch verifyAuth() {
+		case authProbeOK:
+			return agent.HealthStatus{
+				OK:          true,
+				Recoverable: true,
+				Summary:     fmt.Sprintf("ok (pane shows stale auth error text (%s); headless probe verified credentials)", pat),
+			}
+		case authProbeFailed:
+			return agent.HealthStatus{
+				OK:          false,
+				Recoverable: false,
+				Summary:     "Claude Code login expired; run /login in the server session",
+			}
+		default:
+			return agent.HealthStatus{
+				OK:          false,
+				Recoverable: true,
+				Summary:     fmt.Sprintf("pane shows auth error text (%s); auth verification was inconclusive (credential state: %s); will retry", pat, credentialsStateName(creds)),
+			}
+		}
+	}
+	if pat := matchPattern(tail, recoverableErrorPatterns); pat != "" {
+		return agent.HealthStatus{
+			OK:          false,
+			Recoverable: true,
+			Summary:     fmt.Sprintf("session error: %s", pat),
+		}
+	}
 	return agent.HealthStatus{
 		OK:          true,
 		Recoverable: true,
 		Summary:     "ok",
-	}, nil
+	}
+}
+
+func credentialsStateName(state credentialsState) string {
+	switch state {
+	case credentialsValid:
+		return "unexpired-oauth"
+	case credentialsExpired:
+		return "expired-oauth"
+	default:
+		return "unknown"
+	}
 }
 
 // RestartSession kills the existing session and starts a fresh one.
 func (b *TmuxBridge) RestartSession(ctx context.Context) error {
+	b.invalidateAuthProbe()
 	session := b.sessionName()
 	_ = tmux.Run(ctx, "kill-session", "-t", session)
 	// Small delay to let the process clean up

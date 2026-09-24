@@ -15,14 +15,19 @@ type HeadlessRuntime struct {
 	WorkspaceDir string
 }
 
-func headlessArgs() []string {
-	return []string{
+// headlessArgs builds the base `codex exec` flags. When model is non-empty it
+// is passed through as a per-run override; empty uses the codex default.
+func headlessArgs(model string) []string {
+	args := []string{
 		"exec",
 		"--sandbox", "danger-full-access",
 		"--dangerously-bypass-approvals-and-sandbox",
 		"-c", `model_instructions_file="GOATED.md"`,
-		"-",
 	}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	return args
 }
 
 func NewHeadlessRuntime(workspaceDir string) *HeadlessRuntime {
@@ -39,7 +44,7 @@ func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agen
 	cmd := exec.CommandContext(
 		ctx,
 		"codex",
-		headlessArgs()...,
+		append(headlessArgs(req.Model), "-")...,
 	)
 	cmd.Dir = workspaceDir
 	cmd.Stdin = strings.NewReader(req.Prompt)
@@ -75,11 +80,7 @@ func (h *HeadlessRuntime) RunBackground(store *db.Store, req agent.HeadlessReque
 	workspaceDir := chooseWorkspace(req.WorkspaceDir, h.WorkspaceDir)
 	cmd := exec.Command(
 		"codex",
-		"exec",
-		"--sandbox", "danger-full-access",
-		"--dangerously-bypass-approvals-and-sandbox",
-		"-c", `model_instructions_file="GOATED.md"`,
-		req.Prompt,
+		append(headlessArgs(req.Model), req.Prompt)...,
 	)
 	cmd.Dir = workspaceDir
 

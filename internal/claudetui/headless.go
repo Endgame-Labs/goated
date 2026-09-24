@@ -35,6 +35,7 @@ func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agen
 		NotifyMainSession: req.NotifyMainSession,
 		LogCaller:         req.LogCaller,
 		SessionName:       sessionname.ClaudeTUI(workspaceDir),
+		Model:             strings.TrimSpace(req.Model),
 		Runtime: db.ExecutionRuntime{
 			Provider: "claude_tui",
 			Mode:     "headless_exec",
@@ -68,6 +69,7 @@ func (h *HeadlessRuntime) RunBackground(store *db.Store, req agent.HeadlessReque
 		NotifyMainSession: req.NotifyMainSession,
 		LogCaller:         req.LogCaller,
 		SessionName:       sessionname.ClaudeTUI(workspaceDir),
+		Model:             strings.TrimSpace(req.Model),
 		Runtime: db.ExecutionRuntime{
 			Provider: "claude_tui",
 			Mode:     "headless_exec",

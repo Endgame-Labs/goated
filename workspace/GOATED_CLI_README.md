@@ -93,10 +93,17 @@ Use Goated cron for all recurring work. Do **not** use any runtime-native schedu
 
 - Add cron (inline): `./goat cron add --chat <chat_id> --schedule "0 8 * * *" --prompt "Send me Berkeley weather"`
 - Add cron (file): `./goat cron add --chat <chat_id> --schedule "0 8 * * *" --prompt-file /path/to/prompt.md`
+- Add cron (specific model): `./goat cron add --chat <chat_id> --schedule "0 8 * * *" --prompt "..." --model claude-haiku-4-5`
 - List crons: `./goat cron list --chat <chat_id>`
 - Disable cron: `./goat cron disable <id>`
 - Enable cron: `./goat cron enable <id>`
 - Remove cron: `./goat cron remove <id>`
+- Set the model for an existing cron: `./goat cron set-model <id> claude-haiku-4-5`
+- Clear a cron's model (revert to the runtime default): `./goat cron set-model <id>`
+
+The optional `--model` flag selects which model that cron runs with. Leave it
+unset to use the selected runtime's default model. When set, the model is shown in
+`cron list` output (e.g. `model=claude-haiku-4-5`).
 
 ## Subagents
 

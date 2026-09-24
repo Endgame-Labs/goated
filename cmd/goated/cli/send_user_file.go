@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -60,6 +61,9 @@ Examples:
 			return fmt.Errorf("connect daemon socket %s: %w", socketPath, err)
 		}
 		defer conn.Close()
+		// See send_user_message.go: bound the round-trip so a wedged daemon
+		// handler can't hang this process (and the runtime blocked on it).
+		_ = conn.SetDeadline(time.Now().Add(socketRoundTripTimeout))
 
 		if err := json.NewEncoder(conn).Encode(daemonSendRequest{
 			RequestID: requestID,

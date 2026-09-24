@@ -152,6 +152,7 @@ type HeadlessRequest struct {
 	ChatID            string
 	NotifyMainSession bool
 	LogCaller         string // e.g. "cron-7", "main-session", "cli"
+	Model             string // optional per-run model override; empty uses the runtime's configured default
 }
 
 type HeadlessResult struct {

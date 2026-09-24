@@ -1,8 +1,26 @@
 package slack
 
 import (
+	"context"
+	"errors"
 	"testing"
+
+	slackapi "github.com/slack-go/slack"
 )
+
+func TestBlockMessagesHonorCanceledContext(t *testing.T) {
+	c := &Connector{api: slackapi.New("test-token", slackapi.OptionAPIURL("http://127.0.0.1:1/"))}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	blocks := []byte(`[]`)
+
+	if err := c.SendBlockMessage(ctx, "C123", "fallback", blocks); !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendBlockMessage() error = %v, want context.Canceled", err)
+	}
+	if err := c.SendThreadBlockMessage(ctx, "C123", "123.456", "fallback", blocks); !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendThreadBlockMessage() error = %v, want context.Canceled", err)
+	}
+}
 
 func TestSplitMessage_Short(t *testing.T) {
 	chunks := splitMessage("hello", 4000)

@@ -43,6 +43,7 @@ type CronJob struct {
 	Prompt            string `json:"prompt,omitempty"`
 	PromptFile        string `json:"prompt_file,omitempty"`
 	Command           string `json:"command,omitempty"` // shell command for type="system"
+	Model             string `json:"model,omitempty"`   // optional per-cron model override; empty means runtime default
 	Timezone          string `json:"timezone"`
 	Silent            bool   `json:"silent,omitempty"` // legacy field, lazily migrated
 	Active            bool   `json:"active"`
@@ -162,10 +163,10 @@ func (s *Store) update(fn func(tx *bolt.Tx) error) error {
 func (s *Store) AddCron(cronType, chatID, schedule, prompt, promptFile, command, timezone string, silent bool) (uint64, error) {
 	notifyUser := strings.TrimSpace(chatID) != "" && !silent
 	notifyMainSession := !silent
-	return s.AddCronWithNotifications(cronType, chatID, schedule, prompt, promptFile, command, timezone, notifyUser, notifyMainSession)
+	return s.AddCronWithNotifications(cronType, chatID, schedule, prompt, promptFile, command, timezone, "", notifyUser, notifyMainSession)
 }
 
-func (s *Store) AddCronWithNotifications(cronType, chatID, schedule, prompt, promptFile, command, timezone string, notifyUser, notifyMainSession bool) (uint64, error) {
+func (s *Store) AddCronWithNotifications(cronType, chatID, schedule, prompt, promptFile, command, timezone, model string, notifyUser, notifyMainSession bool) (uint64, error) {
 	if cronType == "" {
 		cronType = "subagent"
 	}
@@ -200,6 +201,7 @@ func (s *Store) AddCronWithNotifications(cronType, chatID, schedule, prompt, pro
 			Prompt:            prompt,
 			PromptFile:        promptFile,
 			Command:           command,
+			Model:             strings.TrimSpace(model),
 			Timezone:          timezone,
 			Active:            true,
 			CreatedAt:         time.Now().UTC().Format(time.RFC3339),
@@ -410,6 +412,28 @@ func (s *Store) SetCronTimezone(id uint64, timezone string) error {
 		}
 		job.normalizeNotificationFields()
 		job.Timezone = timezone
+		updated, err := json.Marshal(job)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, updated)
+	})
+}
+
+func (s *Store) SetCronModel(id uint64, model string) error {
+	return s.update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(cronsBucket)
+		key := itob(id)
+		data := b.Get(key)
+		if data == nil {
+			return fmt.Errorf("cron %d not found", id)
+		}
+		var job CronJob
+		if err := json.Unmarshal(data, &job); err != nil {
+			return err
+		}
+		job.normalizeNotificationFields()
+		job.Model = strings.TrimSpace(model)
 		updated, err := json.Marshal(job)
 		if err != nil {
 			return err

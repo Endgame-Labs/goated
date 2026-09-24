@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -69,6 +70,11 @@ Example:
 			return fmt.Errorf("connect daemon socket %s: %w", socketPath, err)
 		}
 		defer conn.Close()
+		// Never block forever waiting on the daemon. The daemon bounds its own
+		// send (~45-60s); this longer deadline lets that timeout fire first and
+		// return a real error, but guarantees this process — and the runtime
+		// blocked on it — can't hang indefinitely if a handler goroutine wedges.
+		_ = conn.SetDeadline(time.Now().Add(socketRoundTripTimeout))
 
 		if err := json.NewEncoder(conn).Encode(daemonSendRequest{
 			RequestID:  requestID,

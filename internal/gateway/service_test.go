@@ -357,7 +357,7 @@ func TestHandleMessage_FailedAttachmentOnlyRepliesToUser(t *testing.T) {
 	if len(resp.messages) != 1 {
 		t.Fatalf("expected 1 user-facing message, got %d", len(resp.messages))
 	}
-	want := "I couldn't process that attachment:\n- report.exe: unsupported file type\nSupported uploads include images, PDF, CSV/TSV, DOCX, and XLSX within the configured size limits."
+	want := "I couldn't process that attachment:\n- report.exe: unsupported file type\nSupported uploads include images, PDF, CSV/TSV, DOCX, XLSX, and text files (TXT, MD, JSON, YAML, LOG) within the configured size limits."
 	if resp.messages[0] != want {
 		t.Fatalf("reply = %q, want %q", resp.messages[0], want)
 	}
@@ -371,7 +371,7 @@ func TestFailedAttachmentReply_LimitsListedFailures(t *testing.T) {
 		{Index: 3, Filename: "four.pdf", Reason: "failed four"},
 	})
 
-	want := "I couldn't process those attachments:\n- one.pdf: failed one\n- two.pdf: failed two\n- three.pdf: failed three\n- and 1 more\nSupported uploads include images, PDF, CSV/TSV, DOCX, and XLSX within the configured size limits."
+	want := "I couldn't process those attachments:\n- one.pdf: failed one\n- two.pdf: failed two\n- three.pdf: failed three\n- and 1 more\nSupported uploads include images, PDF, CSV/TSV, DOCX, XLSX, and text files (TXT, MD, JSON, YAML, LOG) within the configured size limits."
 	if got != want {
 		t.Fatalf("failedAttachmentReply() = %q, want %q", got, want)
 	}

@@ -28,7 +28,7 @@ func (h *HeadlessRuntime) Descriptor() agent.RuntimeDescriptor {
 	return NewSessionRuntime(h.WorkspaceDir, "", "", "", "").Descriptor()
 }
 
-func (h *HeadlessRuntime) piArgs(prompt string) []string {
+func (h *HeadlessRuntime) piArgs(prompt, model string) []string {
 	args := []string{
 		"-p", prompt,
 		"--mode", "json",
@@ -37,16 +37,25 @@ func (h *HeadlessRuntime) piArgs(prompt string) []string {
 	if h.Provider != "" {
 		args = append(args, "--provider", h.Provider)
 	}
-	if h.Model != "" {
-		args = append(args, "--model", h.Model)
+	if model != "" {
+		args = append(args, "--model", model)
 	}
 	return args
+}
+
+// effectiveModel returns the per-run override when set, otherwise the
+// runtime's configured default model.
+func (h *HeadlessRuntime) effectiveModel(override string) string {
+	if strings.TrimSpace(override) != "" {
+		return strings.TrimSpace(override)
+	}
+	return h.Model
 }
 
 func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agent.HeadlessRequest) (agent.HeadlessResult, error) {
 	version := h.Version(ctx)
 	workspaceDir := chooseWorkspace(req.WorkspaceDir, h.WorkspaceDir)
-	cmd := exec.CommandContext(ctx, "pi", h.piArgs(req.Prompt)...)
+	cmd := exec.CommandContext(ctx, "pi", h.piArgs(req.Prompt, h.effectiveModel(req.Model))...)
 	cmd.Dir = workspaceDir
 
 	result, err := subagent.RunSyncCommand(ctx, store, cmd, subagent.RunOpts{
@@ -77,7 +86,7 @@ func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agen
 func (h *HeadlessRuntime) RunBackground(store *db.Store, req agent.HeadlessRequest) (agent.HeadlessResult, error) {
 	version := h.Version(context.Background())
 	workspaceDir := chooseWorkspace(req.WorkspaceDir, h.WorkspaceDir)
-	cmd := exec.Command("pi", h.piArgs(req.Prompt)...)
+	cmd := exec.Command("pi", h.piArgs(req.Prompt, h.effectiveModel(req.Model))...)
 	cmd.Dir = workspaceDir
 
 	result, err := subagent.RunBackgroundCommand(store, cmd, subagent.RunOpts{

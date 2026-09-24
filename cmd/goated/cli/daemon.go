@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -36,6 +37,27 @@ type restartRecord struct {
 }
 
 const maxReplayAge = 1 * time.Hour
+
+// daemonSendTimeout bounds a single outbound send (the gateway API call) inside
+// the socket handler. Without it, an unreachable gateway API (e.g. Telegram TLS
+// timeouts) blocks the handler goroutine forever, which hangs the goat
+// send_user_message client waiting on a response, which in turn hangs the
+// runtime process that spawned it — wedging all message processing. The client
+// sets a longer deadline (see send_user_message.go / send_user_file.go) so the
+// daemon's own timeout fires first and returns a proper error.
+const daemonSendTimeout = 45 * time.Second
+
+// socketRoundTripTimeout is the client-side deadline for a goat send_user_message
+// / send_user_file round-trip to the daemon. It sits above daemonSendTimeout and
+// the Telegram transport timeout so the daemon's own error response wins under
+// normal slowness, while still guaranteeing the client can never block forever.
+const socketRoundTripTimeout = 90 * time.Second
+
+// A send that outlives the client round-trip deadline can no longer complete
+// useful work: the helper (and therefore the runtime waiting on it) has already
+// timed out. The readiness probe reports such sends as stuck so the watchdog
+// can recover the daemon. A short grace avoids boundary races.
+const daemonSendStuckAfter = socketRoundTripTimeout + 15*time.Second
 
 const (
 	subagentDrainTimeout     = 90 * time.Second
@@ -264,6 +286,7 @@ var daemonRunCmd = &cobra.Command{
 				return fmt.Errorf("init telegram: %w", err)
 			}
 			conn.SetRespondAll(cfg.TelegramGroupRespondAll)
+			conn.SetAdminChatID(cfg.AdminChatID)
 			responder = conn
 
 			runner := &cronpkg.Runner{
@@ -330,6 +353,7 @@ type daemonSendRequest struct {
 	Source     string          `json:"source,omitempty"`
 	LogPath    string          `json:"log_path,omitempty"`
 	BlocksJSON json.RawMessage `json:"blocks_json,omitempty"`
+	Probe      bool            `json:"probe,omitempty"`
 }
 
 type daemonSendResponse struct {
@@ -337,12 +361,59 @@ type daemonSendResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
+// daemonSendTracker records real outbound work. Socket accept/readiness alone
+// is insufficient because each connection has its own goroutine; a probe can
+// otherwise succeed while another handler and its calling runtime are wedged.
+type daemonSendTracker struct {
+	mu      sync.Mutex
+	nextID  uint64
+	active  map[uint64]time.Time
+	nowFunc func() time.Time
+}
+
+func newDaemonSendTracker() *daemonSendTracker {
+	return &daemonSendTracker{active: make(map[uint64]time.Time)}
+}
+
+func (t *daemonSendTracker) now() time.Time {
+	if t.nowFunc != nil {
+		return t.nowFunc()
+	}
+	return time.Now()
+}
+
+func (t *daemonSendTracker) begin() func() {
+	t.mu.Lock()
+	t.nextID++
+	id := t.nextID
+	t.active[id] = t.now()
+	t.mu.Unlock()
+	return func() {
+		t.mu.Lock()
+		delete(t.active, id)
+		t.mu.Unlock()
+	}
+}
+
+func (t *daemonSendTracker) readinessError() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.now()
+	for _, started := range t.active {
+		if age := now.Sub(started); age > daemonSendStuckAfter {
+			return fmt.Errorf("outbound send stuck for %s", age.Round(time.Second))
+		}
+	}
+	return nil
+}
+
 func runDaemonSocket(ctx context.Context, socketPath string, responder gateway.Responder, session agent.SessionRuntime, logger *msglog.Logger, gatewayName string) {
+	tracker := newDaemonSendTracker()
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		runDaemonSocketOnce(ctx, socketPath, responder, session, logger, gatewayName)
+		runDaemonSocketOnce(ctx, socketPath, responder, session, logger, gatewayName, tracker)
 		// If we get here, the listener died — wait and retry
 		if ctx.Err() != nil {
 			return
@@ -356,7 +427,7 @@ func runDaemonSocket(ctx context.Context, socketPath string, responder gateway.R
 	}
 }
 
-func runDaemonSocketOnce(ctx context.Context, socketPath string, responder gateway.Responder, session agent.SessionRuntime, logger *msglog.Logger, gatewayName string) {
+func runDaemonSocketOnce(ctx context.Context, socketPath string, responder gateway.Responder, session agent.SessionRuntime, logger *msglog.Logger, gatewayName string, tracker *daemonSendTracker) {
 	_ = os.Remove(socketPath)
 	lc := net.ListenConfig{}
 	ln, err := lc.Listen(ctx, "unix", socketPath)
@@ -396,16 +467,26 @@ func runDaemonSocketOnce(ctx context.Context, socketPath string, responder gatew
 			fmt.Fprintf(os.Stderr, "[%s] daemon socket accept failed: %v\n", time.Now().Format(time.RFC3339), err)
 			return
 		}
-		go handleDaemonSocketConn(ctx, conn, responder, session, logger, gatewayName)
+		go handleDaemonSocketConn(ctx, conn, responder, session, logger, gatewayName, tracker)
 	}
 }
 
-func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gateway.Responder, session agent.SessionRuntime, logger *msglog.Logger, gatewayName string) {
+func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gateway.Responder, session agent.SessionRuntime, logger *msglog.Logger, gatewayName string, tracker *daemonSendTracker) {
 	defer conn.Close()
 
 	var req daemonSendRequest
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
 		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: "invalid request"})
+		return
+	}
+	if req.Probe {
+		if tracker != nil {
+			if err := tracker.readinessError(); err != nil {
+				_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: err.Error()})
+				return
+			}
+		}
+		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: true})
 		return
 	}
 	if strings.TrimSpace(req.ChatID) == "" {
@@ -448,32 +529,41 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 		}, msglog.StatusPending, "")
 	}
 
+	// Bound the actual send so an unreachable gateway API can't wedge this
+	// handler (and the client/runtime blocked on it) indefinitely.
+	sendCtx, cancelSend := context.WithTimeout(ctx, daemonSendTimeout)
+	defer cancelSend()
+	if tracker != nil {
+		finishTracking := tracker.begin()
+		defer finishTracking()
+	}
+
 	var sendErr error
 	if req.FilePath != "" {
 		mediaResponder, ok := responder.(gateway.MediaResponder)
 		if !ok {
 			sendErr = fmt.Errorf("gateway %s does not support outbound media yet", gatewayName)
 		} else {
-			sendErr = mediaResponder.SendMedia(ctx, req.ChatID, req.FilePath, req.Caption, req.MediaType)
+			sendErr = mediaResponder.SendMedia(sendCtx, req.ChatID, req.FilePath, req.Caption, req.MediaType)
 		}
 	} else if len(req.BlocksJSON) > 0 {
 		blockResponder, ok := responder.(gateway.BlockResponder)
 		if !ok {
 			sendErr = fmt.Errorf("gateway %s does not support block messages", gatewayName)
 		} else if req.ThreadTS != "" {
-			sendErr = blockResponder.SendThreadBlockMessage(ctx, req.ChatID, req.ThreadTS, req.Text, req.BlocksJSON)
+			sendErr = blockResponder.SendThreadBlockMessage(sendCtx, req.ChatID, req.ThreadTS, req.Text, req.BlocksJSON)
 		} else {
-			sendErr = blockResponder.SendBlockMessage(ctx, req.ChatID, req.Text, req.BlocksJSON)
+			sendErr = blockResponder.SendBlockMessage(sendCtx, req.ChatID, req.Text, req.BlocksJSON)
 		}
 	} else if req.ThreadTS != "" {
 		threadedResponder, ok := responder.(gateway.ThreadedResponder)
 		if !ok {
 			sendErr = fmt.Errorf("gateway %s does not support threaded messages", gatewayName)
 		} else {
-			sendErr = threadedResponder.SendThreadMessage(ctx, req.ChatID, req.ThreadTS, req.Text)
+			sendErr = threadedResponder.SendThreadMessage(sendCtx, req.ChatID, req.ThreadTS, req.Text)
 		}
 	} else {
-		sendErr = responder.SendMessage(ctx, req.ChatID, req.Text)
+		sendErr = responder.SendMessage(sendCtx, req.ChatID, req.Text)
 	}
 	if sendErr != nil {
 		if logger != nil {
@@ -687,6 +777,23 @@ var daemonStatusCmd = &cobra.Command{
 		pidPath := filepath.Join(cfg.LogDir, "goated_daemon.pid")
 		restartLog := filepath.Join(cfg.LogDir, "restarts.jsonl")
 
+		// --probe: machine-readable readiness check for the watchdog. Exits
+		// non-zero if the daemon is down OR alive-but-unresponsive (wedged
+		// socket), which a plain PID liveness check can't distinguish.
+		if probe, _ := cmd.Flags().GetBool("probe"); probe {
+			pid, running := readPID(pidPath)
+			if !running {
+				fmt.Println("unhealthy: daemon not running")
+				return fmt.Errorf("daemon not running")
+			}
+			if err := probeDaemonSocket(cfg.LogDir, 10*time.Second); err != nil {
+				fmt.Printf("unhealthy: daemon pid=%d alive but socket unresponsive: %v\n", pid, err)
+				return fmt.Errorf("daemon socket unresponsive: %w", err)
+			}
+			fmt.Printf("healthy: daemon pid=%d responsive\n", pid)
+			return nil
+		}
+
 		// Check if running
 		if pid, running := readPID(pidPath); running {
 			fmt.Printf("Daemon running (pid=%d)\n", pid)
@@ -717,6 +824,36 @@ var daemonStatusCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// probeDaemonSocket performs a bounded round-trip against the daemon's Unix
+// socket and returns nil if it answered in time. It sends an intentionally-empty
+// request, which the handler rejects immediately ("chat_id is required") without
+// touching the gateway API — so it proves the socket is accepting connections and
+// handler goroutines run to completion, a real readiness signal beyond "the PID
+// is alive". The watchdog uses this to detect a live-but-wedged daemon.
+func probeDaemonSocket(logDir string, timeout time.Duration) error {
+	socketPath := filepath.Join(logDir, "goated.sock")
+	conn, err := net.DialTimeout("unix", socketPath, timeout)
+	if err != nil {
+		return fmt.Errorf("dial socket: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if err := json.NewEncoder(conn).Encode(daemonSendRequest{Probe: true}); err != nil {
+		return fmt.Errorf("write probe: %w", err)
+	}
+	var resp daemonSendResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+	if !resp.OK {
+		if resp.Error == "" {
+			resp.Error = "daemon reported not ready"
+		}
+		return fmt.Errorf("%s", resp.Error)
+	}
+	return nil
 }
 
 // readExistingPID returns the PID of a running daemon, or 0 if none.
@@ -986,6 +1123,7 @@ func runReRedact(ctx context.Context, logDir, workspaceDir, timezone string) {
 
 func init() {
 	daemonRestartCmd.Flags().String("reason", "", "reason for restarting (required)")
+	daemonStatusCmd.Flags().Bool("probe", false, "probe the daemon socket; exit non-zero if down or unresponsive")
 	daemonCmd.AddCommand(daemonRunCmd)
 	daemonCmd.AddCommand(daemonRestartCmd)
 	daemonCmd.AddCommand(daemonStopCmd)

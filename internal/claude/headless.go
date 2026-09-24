@@ -34,7 +34,7 @@ func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agen
 		NotifyMainSession: req.NotifyMainSession,
 		LogCaller:         req.LogCaller,
 		SessionName:       "goat_claude_main",
-		Model:             h.Model,
+		Model:             effectiveModel(req.Model, h.Model),
 		Runtime: db.ExecutionRuntime{
 			Provider: "claude",
 			Mode:     "headless_exec",
@@ -67,7 +67,7 @@ func (h *HeadlessRuntime) RunBackground(store *db.Store, req agent.HeadlessReque
 		NotifyMainSession: req.NotifyMainSession,
 		LogCaller:         req.LogCaller,
 		SessionName:       "goat_claude_main",
-		Model:             h.Model,
+		Model:             effectiveModel(req.Model, h.Model),
 		Runtime: db.ExecutionRuntime{
 			Provider: "claude",
 			Mode:     "headless_exec",
@@ -98,6 +98,15 @@ func (h *HeadlessRuntime) Version(ctx context.Context) string {
 func chooseWorkspace(reqDir, fallback string) string {
 	if reqDir != "" {
 		return reqDir
+	}
+	return fallback
+}
+
+// effectiveModel returns the per-run override when set, otherwise the
+// runtime's configured default model.
+func effectiveModel(override, fallback string) string {
+	if strings.TrimSpace(override) != "" {
+		return strings.TrimSpace(override)
 	}
 	return fallback
 }

@@ -733,6 +733,6 @@ func failedAttachmentReply(failed []AttachmentResult) string {
 		lines = append(lines, fmt.Sprintf("- and %d more", len(failed)-limit))
 	}
 
-	lines = append(lines, "Supported uploads include images, PDF, CSV/TSV, DOCX, and XLSX within the configured size limits.")
+	lines = append(lines, "Supported uploads include images, PDF, CSV/TSV, DOCX, XLSX, and text files (TXT, MD, JSON, YAML, LOG) within the configured size limits.")
 	return strings.Join(lines, "\n")
 }

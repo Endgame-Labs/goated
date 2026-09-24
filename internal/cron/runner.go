@@ -214,6 +214,7 @@ func (r *Runner) runSubagent(ctx context.Context, job db.CronJob, jobLog string)
 		ChatID:            promptChatID,
 		NotifyMainSession: job.EffectiveNotifyMainSession(),
 		LogCaller:         fmt.Sprintf("cron-%d", job.ID),
+		Model:             job.Model,
 	})
 	if err != nil {
 		return "error", result

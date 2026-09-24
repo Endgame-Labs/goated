@@ -2,12 +2,80 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"goated/internal/agent"
 )
+
+type blockingDaemonResponder struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingDaemonResponder) SendMessage(context.Context, string, string) error {
+	close(r.started)
+	<-r.release
+	return nil
+}
+
+func TestDaemonReadinessProbeDetectsStuckRealSend(t *testing.T) {
+	base := time.Now()
+	current := base
+	tracker := newDaemonSendTracker()
+	tracker.nowFunc = func() time.Time { return current }
+	responder := &blockingDaemonResponder{started: make(chan struct{}), release: make(chan struct{})}
+
+	realServer, realClient := net.Pipe()
+	defer realClient.Close()
+	go handleDaemonSocketConn(context.Background(), realServer, responder, nil, nil, "test", tracker)
+	if err := json.NewEncoder(realClient).Encode(daemonSendRequest{ChatID: "chat-1", Text: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	<-responder.started
+
+	// The socket still accepts independent connections, but readiness must now
+	// inspect owned send work rather than treating acceptance as sufficient.
+	current = base.Add(daemonSendStuckAfter + time.Second)
+	probeServer, probeClient := net.Pipe()
+	defer probeClient.Close()
+	go handleDaemonSocketConn(context.Background(), probeServer, responder, nil, nil, "test", tracker)
+	if err := json.NewEncoder(probeClient).Encode(daemonSendRequest{Probe: true}); err != nil {
+		t.Fatal(err)
+	}
+	var probeResp daemonSendResponse
+	if err := json.NewDecoder(probeClient).Decode(&probeResp); err != nil {
+		t.Fatal(err)
+	}
+	if probeResp.OK || !strings.Contains(probeResp.Error, "outbound send stuck") {
+		t.Fatalf("probe response = %+v, want stuck-send failure", probeResp)
+	}
+
+	close(responder.release)
+	var realResp daemonSendResponse
+	if err := json.NewDecoder(realClient).Decode(&realResp); err != nil {
+		t.Fatal(err)
+	}
+	if !realResp.OK {
+		t.Fatalf("real send response = %+v, want success after release", realResp)
+	}
+}
+
+func TestDaemonReadinessProbeAllowsRecentSend(t *testing.T) {
+	base := time.Now()
+	tracker := newDaemonSendTracker()
+	tracker.nowFunc = func() time.Time { return base }
+	finish := tracker.begin()
+	defer finish()
+	tracker.nowFunc = func() time.Time { return base.Add(daemonSendStuckAfter) }
+	if err := tracker.readinessError(); err != nil {
+		t.Fatalf("recent bounded send reported unhealthy: %v", err)
+	}
+}
 
 type noticeSpySession struct {
 	channel  string

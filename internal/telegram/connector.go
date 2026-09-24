@@ -14,6 +14,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"goated/internal/adminctl"
 	"goated/internal/gateway"
 	"goated/internal/util"
 )
@@ -43,6 +44,17 @@ type Connector struct {
 	respondAll     bool
 	botUsername    string
 	botUserID      int64
+
+	// adminChatID, when non-zero, is the owner chat allowed to run "/admin ..."
+	// escape-hatch commands. These are handled on the receive goroutine, before
+	// the (potentially blocked) runtime handler, so they work even when a
+	// message is wedging the session.
+	adminChatID int64
+
+	// Test seams for the two externally-effectful admin steps. Production uses
+	// SendMessage and adminctl.Execute when these are nil.
+	adminSend    func(context.Context, string, string) error
+	adminExecute func(string) adminctl.Result
 }
 
 type RunMode string
@@ -51,6 +63,10 @@ const (
 	RunModePolling RunMode = "polling"
 	RunModeWebhook RunMode = "webhook"
 )
+
+// telegramHTTPTimeout bounds every Telegram Bot API call. It must stay above the
+// 30s getUpdates long-poll (see u.Timeout below) while still capping a hung send.
+const telegramHTTPTimeout = 60 * time.Second
 
 type WebhookOptions struct {
 	PublicURL  string
@@ -63,6 +79,14 @@ func NewConnector(token string, allowedChatIDs []int64, store OffsetStore, attac
 	if err != nil {
 		return nil, fmt.Errorf("init telegram bot: %w", err)
 	}
+
+	// Bound every Telegram API call at the transport layer. tgbotapi's default
+	// client has no timeout, so an unreachable api.telegram.org (TLS handshake
+	// timeouts, etc.) blocks bot.Send forever — which hangs the daemon socket
+	// handler, the goat send_user_message client, and the runtime that spawned
+	// it, wedging all message processing. Must exceed the getUpdates long-poll
+	// (u.Timeout = 30s) so normal polling isn't cut short.
+	bot.Client = &http.Client{Timeout: telegramHTTPTimeout}
 
 	rootPath := strings.TrimSpace(attachmentCfg.RootPath)
 	if rootPath == "" {
@@ -119,6 +143,17 @@ func (c *Connector) SetRespondAll(v bool) {
 	c.respondAll = v
 }
 
+// SetAdminChatID sets the owner chat permitted to run "/admin ..." escape-hatch
+// commands. An empty or unparsable value disables them.
+func (c *Connector) SetAdminChatID(raw string) {
+	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		c.adminChatID = 0
+		return
+	}
+	c.adminChatID = id
+}
+
 func (c *Connector) Run(ctx context.Context, handler gateway.Handler, mode RunMode, webhookOpts WebhookOptions) error {
 	go c.runAttachmentSweeper(ctx)
 
@@ -167,6 +202,8 @@ func (c *Connector) runPolling(ctx context.Context, handler gateway.Handler) err
 	updates := c.bot.GetUpdatesChan(u)
 	defer c.bot.StopReceivingUpdates()
 
+	work := c.startUpdateWorker(ctx, handler)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -174,18 +211,95 @@ func (c *Connector) runPolling(ctx context.Context, handler gateway.Handler) err
 		case update := <-updates:
 			// Persist offset so restarts don't replay old messages
 			c.saveOffset(update.UpdateID + 1)
+			c.dispatch(ctx, work, update)
+		}
+	}
+}
 
-			if err := c.processUpdate(ctx, handler, update); err != nil {
-				chatID := "unknown"
-				if update.Message != nil {
-					chatID = strconv.FormatInt(update.Message.Chat.ID, 10)
-				}
-				if chatID != "unknown" {
-					_ = c.SendMessage(ctx, chatID, "Error: "+err.Error())
+// startUpdateWorker runs a single goroutine that processes updates sequentially,
+// preserving one-at-a-time runtime handling. The receive goroutine stays free to
+// service owner /admin commands even while this worker is blocked on a busy or
+// wedged runtime.
+func (c *Connector) startUpdateWorker(ctx context.Context, handler gateway.Handler) chan<- tgbotapi.Update {
+	work := make(chan tgbotapi.Update, 64)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case update := <-work:
+				if err := c.processUpdate(ctx, handler, update); err != nil {
+					chatID := "unknown"
+					if update.Message != nil {
+						chatID = strconv.FormatInt(update.Message.Chat.ID, 10)
+					}
+					if chatID != "unknown" {
+						_ = c.SendMessage(ctx, chatID, "Error: "+err.Error())
+					}
 				}
 			}
 		}
+	}()
+	return work
+}
+
+// dispatch routes one update. Owner /admin commands are handled inline on the
+// receive goroutine (the escape hatch); everything else is queued to the worker.
+func (c *Connector) dispatch(ctx context.Context, work chan<- tgbotapi.Update, update tgbotapi.Update) bool {
+	if c.tryHandleAdminCommand(ctx, update) {
+		return true
 	}
+	select {
+	case work <- update:
+		return true
+	case <-ctx.Done():
+		return false
+	default:
+		// Never let a full normal-work queue block the receive loop: it must
+		// remain able to receive an owner escape-hatch command. The update was
+		// already persisted by the polling loop, so record the explicit drop.
+		fmt.Fprintf(os.Stderr, "telegram: update queue full; dropped update_id=%d\n", update.UpdateID)
+		return false
+	}
+}
+
+// tryHandleAdminCommand handles an owner "/admin ..." command directly and
+// returns true if it consumed the update. Only the configured adminChatID is
+// honored, so non-owner traffic falls through to normal processing.
+func (c *Connector) tryHandleAdminCommand(ctx context.Context, update tgbotapi.Update) bool {
+	if c.adminChatID == 0 || update.Message == nil || update.Message.Chat == nil || update.Message.From == nil {
+		return false
+	}
+	// Fail closed: a configured group chat ID must never grant every member
+	// restart power. Telegram private-chat IDs match the sender's user ID, so
+	// bind both dimensions to the configured owner.
+	if update.Message.Chat.Type != "private" ||
+		update.Message.Chat.ID != c.adminChatID ||
+		int64(update.Message.From.ID) != c.adminChatID {
+		return false
+	}
+	sub, ok := adminctl.Parse(update.Message.Text)
+	if !ok {
+		return false
+	}
+	execute := c.adminExecute
+	if execute == nil {
+		execute = adminctl.Execute
+	}
+	res := execute(sub)
+	chatID := strconv.FormatInt(update.Message.Chat.ID, 10)
+	send := c.adminSend
+	if send == nil {
+		send = c.SendMessage
+	}
+	if err := send(ctx, chatID, res.Reply); err != nil {
+		fmt.Fprintf(os.Stderr, "telegram: failed to send /admin %s receipt: %v\n", sub, err)
+		return true
+	}
+	if res.After != nil {
+		res.After()
+	}
+	return true
 }
 
 func (c *Connector) runWebhook(ctx context.Context, handler gateway.Handler, opts WebhookOptions) error {
@@ -222,6 +336,8 @@ func (c *Connector) runWebhook(ctx context.Context, handler gateway.Handler, opt
 		serverErrCh <- nil
 	}()
 
+	work := c.startUpdateWorker(ctx, handler)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -236,15 +352,7 @@ func (c *Connector) runWebhook(ctx context.Context, handler gateway.Handler, opt
 			}
 			return nil
 		case update := <-updates:
-			if err := c.processUpdate(ctx, handler, update); err != nil {
-				chatID := "unknown"
-				if update.Message != nil {
-					chatID = strconv.FormatInt(update.Message.Chat.ID, 10)
-				}
-				if chatID != "unknown" {
-					_ = c.SendMessage(ctx, chatID, "Error: "+err.Error())
-				}
-			}
+			c.dispatch(ctx, work, update)
 		}
 	}
 }

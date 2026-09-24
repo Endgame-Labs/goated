@@ -85,11 +85,10 @@ func (r *SessionRuntime) execArgs() []string {
 }
 
 func (r *SessionRuntime) promptArgs(threadID string) []string {
-	if threadID != "" {
-		args := append([]string{"exec", "resume"}, r.execArgs()...)
-		return append(args, threadID, "-")
-	}
 	args := append([]string{"exec"}, r.execArgs()...)
+	if threadID != "" {
+		return append(args, "resume", threadID, "-")
+	}
 	return append(args, "-")
 }
 

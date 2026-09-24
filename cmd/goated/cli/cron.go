@@ -57,6 +57,7 @@ var (
 	cronAddPrompt     string
 	cronAddPromptFile string
 	cronAddCommand    string
+	cronAddModel      string
 	cronAddTimezone   string
 	cronAddSilent     bool
 	cronAddNotifyUser bool
@@ -112,7 +113,7 @@ var cronAddCmd = &cobra.Command{
 		}
 		defer database.Close()
 
-		id, err := database.AddCronWithNotifications(cronAddType, chatID, cronAddSchedule, cronAddPrompt, cronAddPromptFile, cronAddCommand, tz, notifyUser, notifyMainSession)
+		id, err := database.AddCronWithNotifications(cronAddType, chatID, cronAddSchedule, cronAddPrompt, cronAddPromptFile, cronAddCommand, tz, strings.TrimSpace(cronAddModel), notifyUser, notifyMainSession)
 		if err != nil {
 			return err
 		}
@@ -174,7 +175,11 @@ var cronListCmd = &cobra.Command{
 			} else {
 				detail = fmt.Sprintf("prompt=%q", j.Prompt)
 			}
-			fmt.Printf("#%d [%s] type=%s schedule=%q tz=%s notify_user=%t chat=%s notify_main_session=%t %s\n",
+			modelDisplay := ""
+			if j.Model != "" {
+				modelDisplay = fmt.Sprintf(" model=%s", j.Model)
+			}
+			fmt.Printf("#%d [%s] type=%s schedule=%q tz=%s notify_user=%t chat=%s notify_main_session=%t%s %s\n",
 				j.ID,
 				status,
 				jobType,
@@ -183,6 +188,7 @@ var cronListCmd = &cobra.Command{
 				j.EffectiveNotifyUser(),
 				j.ChatID,
 				j.EffectiveNotifyMainSession(),
+				modelDisplay,
 				detail,
 			)
 		}
@@ -315,6 +321,43 @@ var cronSetTimezoneCmd = &cobra.Command{
 	},
 }
 
+var cronSetModelCmd = &cobra.Command{
+	Use:   "set-model ID [MODEL]",
+	Short: "Set or clear the model a cron runs with; omit MODEL (or pass \"\") to use the runtime default",
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 1 || len(args) > 2 {
+			return fmt.Errorf("accepts ID [MODEL]")
+		}
+		return nil
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := strconv.ParseUint(args[0], 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid ID: %w", err)
+		}
+		model := ""
+		if len(args) == 2 {
+			model = args[1]
+		}
+		cfg := app.LoadConfig()
+		database, err := db.Open(cfg.DBPath)
+		if err != nil {
+			return err
+		}
+		defer database.Close()
+
+		if err := database.SetCronModel(id, model); err != nil {
+			return err
+		}
+		if strings.TrimSpace(model) == "" {
+			fmt.Printf("Cleared model for cron %d (using runtime default)\n", id)
+		} else {
+			fmt.Printf("Set cron %d model to %s\n", id, model)
+		}
+		return nil
+	},
+}
+
 var cronSetSilentCmd = &cobra.Command{
 	Use:   "set-silent ID true|false",
 	Short: "Deprecated: map legacy silent semantics onto notify_user/notify_main_session",
@@ -415,6 +458,7 @@ func init() {
 	cronAddCmd.Flags().StringVar(&cronAddPrompt, "prompt", "", "Inline prompt to execute (subagent)")
 	cronAddCmd.Flags().StringVar(&cronAddPromptFile, "prompt-file", "", "Path to a prompt file (subagent)")
 	cronAddCmd.Flags().StringVar(&cronAddCommand, "command", "", "Shell command to run (system)")
+	cronAddCmd.Flags().StringVar(&cronAddModel, "model", "", "Optional model to run this cron with (e.g. claude-haiku-4-5). Empty uses the runtime default.")
 	cronAddCmd.Flags().StringVar(&cronAddTimezone, "timezone", "", "IANA timezone (e.g. UTC, America/Los_Angeles). Defaults to GOAT_DEFAULT_TIMEZONE.")
 	cronAddCmd.Flags().BoolVar(&cronAddSilent, "silent", false, "Deprecated legacy shorthand: disable both user and main-session success notifications")
 	cronAddCmd.Flags().BoolVar(&cronAddNotifyUser, "notify-user", false, "Notify the user directly for this cron")
@@ -422,6 +466,6 @@ func init() {
 
 	cronListCmd.Flags().StringVar(&cronListChat, "chat", "", "Filter by chat ID (optional)")
 
-	cronCmd.AddCommand(cronRunCmd, cronAddCmd, cronListCmd, cronEnableCmd, cronDisableCmd, cronRemoveCmd, cronSetScheduleCmd, cronSetTimezoneCmd, cronSetSilentCmd, cronSetNotifyUserCmd, cronSetNotifyMainSessionCmd)
+	cronCmd.AddCommand(cronRunCmd, cronAddCmd, cronListCmd, cronEnableCmd, cronDisableCmd, cronRemoveCmd, cronSetScheduleCmd, cronSetTimezoneCmd, cronSetModelCmd, cronSetSilentCmd, cronSetNotifyUserCmd, cronSetNotifyMainSessionCmd)
 	rootCmd.AddCommand(cronCmd)
 }
