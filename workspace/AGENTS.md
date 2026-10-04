@@ -87,6 +87,14 @@ Never use runtime-native memory features for long-term knowledge and memory
 state. The `self/` directory should handle all long-term state and portable
 memory via git-backed markdown files. Check `self/AGENTS.md` to learn more.
 
+Optional `goal_context` in a private message envelope is a compact pointer to
+active `self/GOALS/<slug>/GOAL.md` files and/or `self/DREAM.md`. Before advising
+or acting on a related goal, read its file and reconcile it with the current
+user request. A goal or dream is not independent authorization to spend,
+contact others, schedule recurring work, deploy, or change permissions. The
+DREAM file is exploratory; ask the user before turning it into a commitment.
+See `docs/GOALS_AND_DREAMS.md` for the opt-in file contract.
+
 Responding to the user:
 - Messages arrive in the configured transport envelope (currently pydict,
   Python dict literal). See `PYDICT_FORMAT.md` for the format spec.

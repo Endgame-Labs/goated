@@ -154,3 +154,14 @@ func TestBuildPromptEnvelopeIncludesRetrievedMemorySeparately(t *testing.T) {
 		t.Fatalf("lost user message: %s", got)
 	}
 }
+
+func TestGoalContextInSingleAndBatchEnvelope(t *testing.T) {
+	ctx := &MessageContext{GoalContext: "self/GOALS/example/GOAL.md"}
+	single := BuildPromptEnvelope("slack", "D1", "hello", nil, "", "", ctx)
+	batch := BuildBatchEnvelope("slack", "D1", []PromptMessage{{Text: "hello", Context: ctx}})
+	for _, got := range []string{single, batch} {
+		if !strings.Contains(got, "goal_context") || !strings.Contains(got, "self/GOALS/example/GOAL.md") {
+			t.Fatalf("missing goal context: %s", got)
+		}
+	}
+}

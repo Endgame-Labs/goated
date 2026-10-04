@@ -27,6 +27,8 @@ It shows three things:
 - `tools/toolbox-cli/` contains a reusable Go CLI skeleton
 - `tools/toolbox` is the binary produced by that module after build
 - `MISSIONS/` holds operational mission state
+- `GOALS/<slug>/GOAL.md` may hold user-authorized long-term outcomes
+- `DREAM.md` may hold an exploratory direction, never independent authority
 - `VAULT/` holds durable knowledge in an Obsidian-style vault
 - `HEARTBEAT.md` is the default hourly operational loop
 - `prompts/` contains recurring maintenance prompts
