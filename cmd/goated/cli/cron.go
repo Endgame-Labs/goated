@@ -46,7 +46,9 @@ var cronRunCmd = &cobra.Command{
 
 		now := time.Now()
 		fmt.Printf("Running cron check for %s\n", now.Format(time.RFC3339))
-		return runner.Run(context.Background(), now)
+		err = runner.Run(context.Background(), now)
+		runner.Wait()
+		return err
 	},
 }
 

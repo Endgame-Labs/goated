@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -23,7 +25,16 @@ type Runner struct {
 	LogDir       string
 	Notifier     Notifier
 	Headless     agent.HeadlessRuntime
+
+	mu            sync.Mutex
+	running       map[uint64]bool
+	systemSlots   chan struct{}
+	subagentSlots chan struct{}
+	workers       sync.WaitGroup
 }
+
+// Bound each class separately so long AI work cannot starve cheap system jobs.
+const maxConcurrentPerType = 4
 
 type Notifier interface {
 	SendMessage(ctx context.Context, chatID, text string) error
@@ -54,23 +65,76 @@ func (r *Runner) Run(ctx context.Context, now time.Time) error {
 	if err := os.MkdirAll(filepath.Join(r.LogDir, "cron", "jobs"), 0o755); err != nil {
 		return fmt.Errorf("mkdir cron jobs log dir: %w", err)
 	}
+	// Launch system checks first; both classes retain their own bounded queue.
+	sort.SliceStable(jobs, func(i, j int) bool { return jobs[i].Type == "system" && jobs[j].Type != "system" })
 
-	records := make([]runRecord, 0, len(jobs))
 	for _, job := range jobs {
-		// Skip if a previous run of this cron job is still in-flight
-		if r.Store.CronJobRunning(job.ID) {
+		r.mu.Lock()
+		// The in-memory guard covers system jobs and the gap before a subagent
+		// creates its run record; the store guard covers already-running agents.
+		if r.running[job.ID] || r.Store.CronJobRunning(job.ID) {
 			fmt.Fprintf(os.Stderr, "[%s] cron #%d still running, skipping\n",
 				time.Now().Format(time.RFC3339), job.ID)
+			r.mu.Unlock()
 			continue
 		}
-		rec, err := r.runOne(ctx, nowMinute, job)
-		if err != nil {
-			return err
+		if ctx.Err() != nil {
+			r.mu.Unlock()
+			return ctx.Err()
 		}
-		records = append(records, rec)
+		if r.running == nil {
+			r.running = make(map[uint64]bool)
+		}
+		if r.systemSlots == nil {
+			r.systemSlots = make(chan struct{}, maxConcurrentPerType)
+			r.subagentSlots = make(chan struct{}, maxConcurrentPerType)
+		}
+		r.running[job.ID] = true
+		r.workers.Add(1)
+		r.mu.Unlock()
+
+		go r.runJob(ctx, nowMinute, job)
 	}
-	return appendRunRecords(filepath.Join(r.LogDir, "cron", "runs.jsonl"), records)
+	return nil
 }
+
+func (r *Runner) runJob(ctx context.Context, minute time.Time, job db.CronJob) {
+	defer r.workers.Done()
+	defer func() {
+		r.mu.Lock()
+		delete(r.running, job.ID)
+		r.mu.Unlock()
+	}()
+	r.mu.Lock()
+	slots := r.subagentSlots
+	if job.Type == "system" {
+		slots = r.systemSlots
+	}
+	r.mu.Unlock()
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+	case <-ctx.Done():
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	rec, err := r.runOne(ctx, minute, job)
+	if err == nil {
+		// Serialize JSONL writes from independently finishing workers.
+		r.mu.Lock()
+		err = appendRunRecords(filepath.Join(r.LogDir, "cron", "runs.jsonl"), []runRecord{rec})
+		r.mu.Unlock()
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] cron #%d: %v\n", time.Now().Format(time.RFC3339), job.ID, err)
+	}
+}
+
+// Wait must be called after the caller stops invoking Run. It keeps the store
+// and notifier alive until all dispatched jobs have finished.
+func (r *Runner) Wait() { r.workers.Wait() }
 
 func (r *Runner) dueJobs(nowMinute time.Time) ([]db.CronJob, error) {
 	all, err := r.Store.ActiveCrons()
@@ -100,8 +164,12 @@ func (r *Runner) dueJobs(nowMinute time.Time) ([]db.CronJob, error) {
 }
 
 const cronJobTimeout = 1 * time.Hour
+const runtimeVersionTimeout = 5 * time.Second
 
 func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob) (runRecord, error) {
+	jobCtx, jobCancel := context.WithTimeout(ctx, cronJobTimeout)
+	defer jobCancel()
+
 	runMinute := nowMinute.Format(time.RFC3339)
 	notifyUser := job.EffectiveNotifyUser()
 	notifyMainSession := job.EffectiveNotifyMainSession()
@@ -111,7 +179,9 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 	}
 	runtimeMeta := db.ExecutionRuntime{}
 	if r.Headless != nil {
-		version := r.Headless.Version(context.Background())
+		versionCtx, versionCancel := context.WithTimeout(jobCtx, runtimeVersionTimeout)
+		version := r.Headless.Version(versionCtx)
+		versionCancel()
 		runtimeMeta = db.ExecutionRuntime{
 			Provider: string(r.Headless.Descriptor().Provider),
 			Mode:     "headless_exec",
@@ -122,9 +192,6 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 	if err := r.Store.RecordCronRun(job.ID, runMinute, "started", "", "", runtimeMeta); err != nil {
 		return runRecord{}, fmt.Errorf("insert cron run: %w", err)
 	}
-
-	jobCtx, jobCancel := context.WithTimeout(ctx, cronJobTimeout)
-	defer jobCancel()
 
 	jobLog := filepath.Join(r.LogDir, "cron", "jobs", fmt.Sprintf("%s-cron-%d.log", nowMinute.Format("20060102-1504"), job.ID))
 
