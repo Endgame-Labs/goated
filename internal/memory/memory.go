@@ -34,7 +34,7 @@ type Judge interface {
 
 // CommandSearcher runs an argv command (never a shell). Append the query as the
 // final argument, or put {query} in exactly one argument. JSON chunks are
-// preferred; Alan remember's sectioned text is also supported.
+// preferred; sectioned text is also supported.
 type CommandSearcher struct {
 	Args     []string
 	Dir      string

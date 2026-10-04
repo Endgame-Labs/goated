@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -13,10 +12,11 @@ import (
 )
 
 func memoryEngine(cfg app.Config) *memory.Engine {
-	if len(cfg.MemorySearchCommand) == 0 {
-		return nil
+	var searcher memory.Searcher = memory.FileSearcher{Workspace: cfg.WorkspaceDir}
+	if len(cfg.MemorySearchCommand) > 0 {
+		searcher = memory.CommandSearcher{Args: cfg.MemorySearchCommand, Dir: cfg.WorkspaceDir, Timeout: 3 * time.Second}
 	}
-	engine := &memory.Engine{Searcher: memory.CommandSearcher{Args: cfg.MemorySearchCommand, Dir: cfg.WorkspaceDir, Timeout: 3 * time.Second}, MaxChunks: cfg.MemoryMaxChunks, Parallel: 4, Timeout: 5 * time.Second}
+	engine := &memory.Engine{Searcher: searcher, MaxChunks: cfg.MemoryMaxChunks, Parallel: 4, Timeout: 5 * time.Second}
 	if cfg.MemoryJevEnabled {
 		if key := memory.KeyFromFile(cfg.WorkspaceDir); key != "" {
 			engine.Judge = memory.JevJudge{APIKey: key, URL: cfg.MemoryJevURL, Model: cfg.MemoryJevModel, Threshold: cfg.MemoryJevThreshold}
@@ -30,11 +30,11 @@ func memoryEngine(cfg app.Config) *memory.Engine {
 var memoryCmd = &cobra.Command{Use: "memory", Short: "Memory search operations"}
 var memorySearchCmd = &cobra.Command{Use: "search QUERY", Args: cobra.ExactArgs(1), Short: "Search the configured memory backend; output source-linked JSON chunks", RunE: func(cmd *cobra.Command, args []string) error {
 	cfg := app.LoadConfig()
-	if len(cfg.MemorySearchCommand) == 0 {
-		return errors.New("memory.search_command is not configured")
+	var searcher memory.Searcher = memory.FileSearcher{Workspace: cfg.WorkspaceDir}
+	if len(cfg.MemorySearchCommand) > 0 {
+		searcher = memory.CommandSearcher{Args: cfg.MemorySearchCommand, Dir: cfg.WorkspaceDir, Timeout: 5 * time.Second}
 	}
-	s := memory.CommandSearcher{Args: cfg.MemorySearchCommand, Dir: cfg.WorkspaceDir, Timeout: 5 * time.Second}
-	chunks, err := s.Search(cmd.Context(), args[0])
+	chunks, err := searcher.Search(cmd.Context(), args[0])
 	if err != nil {
 		return err
 	}

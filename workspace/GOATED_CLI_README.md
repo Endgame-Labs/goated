@@ -119,4 +119,4 @@ ad-hoc prompts without going through the gateway.
 
 ## Standard memory search
 
-When `memory.search_command` is configured in `goated.json`, use `./goat memory search "query"` to run the configured provider and receive JSON chunks with `source` and `text`. The gateway also runs this provider automatically before each normal user turn. The provider is an argv array (no shell interpolation); `{query}` is replaced with the current user message, or the query is appended if no placeholder appears. An example Alan-specific setting is `["self/tools/alan", "remember", "{query}"]`.
+Use `./goat memory search "query"` to run the standard memory provider and receive JSON chunks with `source` and `text`. By default, Goated searches Markdown/text files under `workspace/self/` (falling back to `workspace/` if `self/` is absent). An instance can replace the provider with a `memory.search_command` argv array in `goated.json`; `{query}` is replaced with the current user message, or the query is appended if no placeholder appears. The gateway runs the same provider automatically before each normal user turn.

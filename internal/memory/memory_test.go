@@ -43,7 +43,7 @@ func TestEngineParallelOrder(t *testing.T) {
 		t.Fatalf("not concurrent: %d", j.max.Load())
 	}
 }
-func TestParseAlanSections(t *testing.T) {
+func TestParseSections(t *testing.T) {
 	got := parseSections("=== Remembering ===\n\n--- [file] vault/a.md ---\nalpha\n--- [tpuf-semantic] notes/b.md ---\nbeta\n")
 	if !reflect.DeepEqual(got, []Chunk{{"vault/a.md", "alpha\n"}, {"notes/b.md", "beta\n"}}) {
 		t.Fatalf("got %#v", got)

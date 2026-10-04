@@ -7,7 +7,7 @@
   "log_dir": "/path/to/goated/logs",
   "model": "opus",
   "memory": {
-    "search_command": ["./my-memory-search", "{query}"],
+    "search_command": [],
     "max_chunks": 12,
     "jev": {
       "enabled": false,
