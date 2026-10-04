@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -23,7 +24,14 @@ type Runner struct {
 	LogDir       string
 	Notifier     Notifier
 	Headless     agent.HeadlessRuntime
+
+	mu      sync.Mutex
+	running map[uint64]bool
+	workers sync.WaitGroup
 }
+
+// Keep cron execution bounded even when many jobs become due together.
+const maxConcurrentJobs = 4
 
 type Notifier interface {
 	SendMessage(ctx context.Context, chatID, text string) error
@@ -55,22 +63,60 @@ func (r *Runner) Run(ctx context.Context, now time.Time) error {
 		return fmt.Errorf("mkdir cron jobs log dir: %w", err)
 	}
 
-	records := make([]runRecord, 0, len(jobs))
 	for _, job := range jobs {
-		// Skip if a previous run of this cron job is still in-flight
-		if r.Store.CronJobRunning(job.ID) {
+		r.mu.Lock()
+		// The in-memory guard covers system jobs and the gap before a subagent
+		// creates its run record; the store guard covers already-running agents.
+		if r.running[job.ID] || r.Store.CronJobRunning(job.ID) {
 			fmt.Fprintf(os.Stderr, "[%s] cron #%d still running, skipping\n",
 				time.Now().Format(time.RFC3339), job.ID)
+			r.mu.Unlock()
 			continue
 		}
-		rec, err := r.runOne(ctx, nowMinute, job)
-		if err != nil {
-			return err
+		if ctx.Err() != nil {
+			r.mu.Unlock()
+			return ctx.Err()
 		}
-		records = append(records, rec)
+		if len(r.running) >= maxConcurrentJobs {
+			fmt.Fprintf(os.Stderr, "[%s] cron #%d skipped: %d jobs already running\n",
+				time.Now().Format(time.RFC3339), job.ID, maxConcurrentJobs)
+			r.mu.Unlock()
+			continue
+		}
+		if r.running == nil {
+			r.running = make(map[uint64]bool)
+		}
+		r.running[job.ID] = true
+		r.workers.Add(1)
+		r.mu.Unlock()
+
+		go r.runJob(ctx, nowMinute, job)
 	}
-	return appendRunRecords(filepath.Join(r.LogDir, "cron", "runs.jsonl"), records)
+	return nil
 }
+
+func (r *Runner) runJob(ctx context.Context, minute time.Time, job db.CronJob) {
+	defer r.workers.Done()
+	defer func() {
+		r.mu.Lock()
+		delete(r.running, job.ID)
+		r.mu.Unlock()
+	}()
+	rec, err := r.runOne(ctx, minute, job)
+	if err == nil {
+		// Serialize JSONL writes from independently finishing workers.
+		r.mu.Lock()
+		err = appendRunRecords(filepath.Join(r.LogDir, "cron", "runs.jsonl"), []runRecord{rec})
+		r.mu.Unlock()
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] cron #%d: %v\n", time.Now().Format(time.RFC3339), job.ID, err)
+	}
+}
+
+// Wait must be called after the caller stops invoking Run. It keeps the store
+// and notifier alive until all dispatched jobs have finished.
+func (r *Runner) Wait() { r.workers.Wait() }
 
 func (r *Runner) dueJobs(nowMinute time.Time) ([]db.CronJob, error) {
 	all, err := r.Store.ActiveCrons()

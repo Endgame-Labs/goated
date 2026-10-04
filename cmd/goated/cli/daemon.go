@@ -223,6 +223,8 @@ var daemonRunCmd = &cobra.Command{
 
 		var runGateway func() error
 		var responder gateway.Responder
+		var cronRunner *cronpkg.Runner
+		cronDone := make(chan struct{})
 
 		switch cfg.Gateway {
 		case "slack":
@@ -258,7 +260,8 @@ var daemonRunCmd = &cobra.Command{
 				Notifier:     cronNoticeNotifier{responder: conn, session: runtime.Session(), channel: cfg.Gateway},
 				Headless:     runtime.Headless(),
 			}
-			go runCronTicker(ctx, runner)
+			cronRunner = runner
+			go func() { defer close(cronDone); runCronTicker(ctx, runner) }()
 
 			runGateway = func() error {
 				fmt.Fprintf(os.Stderr, "[%s] goated daemon running (pid=%d, gateway=slack)\n",
@@ -297,7 +300,8 @@ var daemonRunCmd = &cobra.Command{
 				Notifier:     cronNoticeNotifier{responder: conn, session: runtime.Session(), channel: cfg.Gateway},
 				Headless:     runtime.Headless(),
 			}
-			go runCronTicker(ctx, runner)
+			cronRunner = runner
+			go func() { defer close(cronDone); runCronTicker(ctx, runner) }()
 
 			mode := telegram.RunModePolling
 			if cfg.TelegramMode == "webhook" {
@@ -319,8 +323,12 @@ var daemonRunCmd = &cobra.Command{
 			go runDaemonSocket(ctx, socketPath, responder, runtime.Session(), msgLogger, cfg.Gateway)
 		}
 
-		if err := runGateway(); err != nil && err != context.Canceled {
-			return fmt.Errorf("gateway: %w", err)
+		gatewayErr := runGateway()
+		cancel()
+		<-cronDone        // stop dispatch before waiting for its workers
+		cronRunner.Wait() // workers use the store and notifier
+		if gatewayErr != nil && gatewayErr != context.Canceled {
+			return fmt.Errorf("gateway: %w", gatewayErr)
 		}
 
 		// Wait for in-flight message handlers to finish before exiting
