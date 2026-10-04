@@ -1,4 +1,5 @@
 ---
+type: Guide
 title: Vault
 kind: knowledge_index
 ---
@@ -20,10 +21,13 @@ Use `MISSIONS/` for in-flight execution state.
 
 ## How to use it
 
-- Write markdown with YAML frontmatter.
+- Use [OKF-inspired Markdown](../../../docs/KNOWLEDGE_FORMAT.md) with YAML
+  frontmatter, type/title, source references, and portable relative links.
 - Prefer one entity per file.
 - Keep facts crisp and durable.
 - Link related entities where helpful.
+- Reconcile changed facts in the canonical note; label uncertainty and retain
+  original evidence. Dreaming reports are an audit trail, not independent sources.
 - For the human user, keep a single person note under `people/` and link it
   from `USER.md`.
 

@@ -38,7 +38,7 @@ func (s FileSearcher) Search(ctx context.Context, query string) ([]Chunk, error)
 	}
 	var hits []hit
 	seen := 0
-	skip := map[string]bool{".git": true, "creds": true, "logs": true, "tmp": true, "node_modules": true, "vendor": true, "state": true, "archives": true, "experiments": true, "tools": true, ".venv": true, "venv": true}
+	skip := map[string]bool{".git": true, "creds": true, "logs": true, "tmp": true, "node_modules": true, "vendor": true, "state": true, "archives": true, "experiments": true, "dreams": true, "DREAMS": true, "tools": true, ".venv": true, "venv": true}
 	for _, root := range roots {
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -58,7 +58,7 @@ func (s FileSearcher) Search(ctx context.Context, query string) ([]Chunk, error)
 				}
 				return nil
 			}
-			if d.Name() == "AGENTS.md" || d.Name() == "GOATED.md" || d.Name() == "CLAUDE.md" {
+			if d.Name() == "AGENTS.md" || d.Name() == "GOATED.md" || d.Name() == "CLAUDE.md" || strings.EqualFold(d.Name(), "DREAM.md") {
 				return nil
 			}
 			ext := strings.ToLower(filepath.Ext(d.Name()))

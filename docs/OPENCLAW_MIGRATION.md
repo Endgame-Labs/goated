@@ -65,7 +65,7 @@ Bootstrap will:
 - Build both binaries (`goated` and `workspace/goat`)
 - Initialize the database
 - Create `workspace/self/` with starter templates (identity, memory, missions, vault, prompts)
-- Set up two default cron jobs (hourly heartbeat, knowledge extraction every 8h)
+- Set up two default cron jobs (hourly heartbeat, dreaming every 8h)
 - Walk you through gateway configuration (Slack or Telegram)
 
 ### 2. Copy your OpenClaw workspace

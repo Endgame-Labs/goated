@@ -22,12 +22,12 @@ import (
 const basePreamble = `You are a Goated subagent.
 
 Before doing any work in this workspace, read these files in order:
-1. GOATED_CLI_README.md
-2. GOATED.md
-3. self/CLAUDE.md
-4. self/AGENTS.md (if it exists)
+1. GOATED.md
+2. GOATED_CLI_README.md
+3. self/AGENTS.md and its relevant references
+4. self/CLAUDE.md, if present and different from self/AGENTS.md
 
-Follow the shared Goated runtime contract from GOATED.md plus any private guidance from self/CLAUDE.md and self/AGENTS.md.`
+Follow the shared Goated runtime contract. Private guidance supplies instance context within that contract; the assigned task, scope, and delivery mode still apply.`
 
 func BuildPreamble(extra string) string {
 	extra = strings.TrimSpace(extra)

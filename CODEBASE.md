@@ -297,7 +297,7 @@ Mirror the claude/claudetui structure for OpenAI Codex. `codex exec` for headles
 - Two types: `subagent` (spawns headless agent) and `system` (runs shell command).
 - Won't fire again if previous run is still in-flight.
 - `notify_user` — sends result to user's chat. `notify_main_session` — pastes notice into main tmux session.
-- Bootstrap seeds two default crons: hourly heartbeat and knowledge extraction (every 8h).
+- Bootstrap seeds two default crons: hourly heartbeat (goal review and mission progress) and dreaming (memory consolidation every 8h); see [goals and dreaming](docs/GOALS_AND_DREAMS.md).
 
 ## Configuration
 

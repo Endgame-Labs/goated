@@ -108,7 +108,7 @@ unset to use the selected runtime's default model. When set, the model is shown 
 ## Subagents
 
 - Run headless helper: `./goat spawn-subagent --prompt "Run a headless task"`
-- `spawn-subagent` automatically prepends workspace instructions telling the subagent to read `self/AGENTS.md` first.
+- `spawn-subagent` prepends the shared GOATED.md startup contract, including the CLI guide and `self/AGENTS.md`. Give each assignment a scope, stop condition, and delivery destination.
 
 ## Session management
 

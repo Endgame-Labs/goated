@@ -1,43 +1,34 @@
 ---
-title: Main Heartbeat
+title: Heartbeat
+type: Playbook
 kind: heartbeat
 schedule: hourly
-timezone: America/Los_Angeles
 ---
 
-# HEARTBEAT.md
+# Heartbeat
 
-This is the default recurring check-in for the private `self/` repo.
+Run once, then finish. Resolve paths relative to `self/`. Follow the shared
+Goated contract and the user's recorded scope, pauses, and stop conditions.
 
-## What to do
+1. Read `GOALS/README.md` and each ongoing goal's `GOAL.md` (active or
+   blocked). Reconcile recent user decisions and mission evidence. Update
+   status, progress, blockers, next action, and `last_reviewed_at`. Mark done
+   only when success criteria are verified; record the evidence. Do not restart
+   inactive, done, or archived goals without an applicable user instruction.
+2. Read `MISSIONS/README.md` and `TOOLS.md`. If onboarding is active, advance
+   its next useful step while respecting the user's current priorities.
+3. Otherwise choose one useful step in an active mission supporting an active
+   goal, or another explicitly authorized standalone mission. Check blocked
+   work for changed dependencies. Missing authorization is a blocker, not a
+   reason to invent new permissions.
+4. Do the step, verify its result, and update `MISSION_LOG.md`,
+   `MISSION_TODO.md`, and the linked goal. Preserve other open commitments.
+   If the task produced a requested deliverable, send it through the configured
+   destination; recording completion in a file is not delivery.
+5. Reconcile durable facts in `VAULT/`, `USER.md`, or `MEMORY.md` as needed.
+   Report meaningful progress, a new blocker, or a requested result. Stay quiet
+   for unchanged/no-op checks unless the user requested routine reports.
 
-1. Read `MISSIONS/README.md`.
-2. Read `TOOLS.md` to see what capabilities are available.
-3. Check `MISSIONS/ONBOARD_USER/` first. If onboarding is still active, advance
-   that mission before anything else.
-4. If onboarding is done or inactive, inspect `MISSIONS/` for another mission
-   whose `status` is `active`.
-5. Pick the best mission you can move forward with the tools you have.
-6. Do a concrete piece of work.
-7. Append what happened to that mission's `MISSION_LOG.md`.
-8. Update that mission's `MISSION_TODO.md` with:
-   - remaining work
-   - blockers
-   - the best next action
-9. If you learned durable facts, update `VAULT/`.
-10. If you learned something about the user or yourself, update `USER.md`,
-    `IDENTITY.md`, `MEMORY.md`, or `SOUL.md` immediately before ending the loop.
-
-## Rules
-
-- Prefer advancing an existing mission over creating new mission sprawl.
-- `ONBOARD_USER` is the default first mission in a fresh self repo.
-- If a mission is blocked, record the blocker explicitly.
-- Do not automatically advance missions whose status is `inactive`, `done`, or
-  `archived`.
-- Resume an `inactive` mission only if the user asks or the mission's
-  reactivation condition is now satisfied.
-- If there are no active missions, leave a short note in `MISSIONS/README.md`
-  or the most appropriate mission index file explaining what is missing.
-- Keep execution state in `MISSIONS/`.
-- Keep durable knowledge in `VAULT/`.
+If no work is actionable, record the blocker or missing next step in the
+appropriate goal/mission rather than generating busywork. Only reactivate
+paused work when the user asks or its explicit reactivation condition holds.

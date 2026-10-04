@@ -8,6 +8,23 @@ import (
 	"testing"
 )
 
+func TestFileSearcherExcludesDreamReportsInFallback(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"note.md", "dreams/report.md", "DREAM.md"} {
+		path := filepath.Join(root, "self", rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("Surabaya conference"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := (FileSearcher{Workspace: root}).Search(context.Background(), "Surabaya")
+	if err != nil || len(got) != 1 || got[0].Source != "self/note.md" {
+		t.Fatalf("dream report reused as evidence: %#v, %v", got, err)
+	}
+}
+
 func TestFileSearcherDefaultAndSecretExclusion(t *testing.T) {
 	root := t.TempDir()
 	must := func(p, body string) {

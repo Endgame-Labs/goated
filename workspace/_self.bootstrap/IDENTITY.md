@@ -1,4 +1,5 @@
 ---
+type: Note
 title: Agent Identity
 kind: identity
 last_updated: 2026-03-19
@@ -8,8 +9,9 @@ last_updated: 2026-03-19
 
 Use this file for stable facts about yourself:
 - your name
-- your voice and tone
-- your operating style
-- your preferences and defaults
+- your agreed role and relationship to the user
+- stable factual operating context
 
-Update this file immediately when you learn something stable about yourself.
+Values and voice belong in SOUL.md; preferences about the user belong in USER.md.
+
+Update deliberately when these facts change, not from automated dream reflections.

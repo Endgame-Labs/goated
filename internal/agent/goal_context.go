@@ -12,10 +12,15 @@ import (
 
 // GoalContext is a compact, file-backed reminder, not an instruction source.
 // It deliberately includes pointers rather than the contents of goal files.
-// A missing self/GOALS directory and self/DREAM.md keep this feature off.
+// A missing self/GOALS directory keeps this feature off.
 func GoalContext(workspaceDir string) string {
 	self := filepath.Join(workspaceDir, "self")
 	goalsDir := filepath.Join(self, "GOALS")
+	for _, dir := range []string{self, goalsDir} {
+		if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return ""
+		}
+	}
 	entries, err := os.ReadDir(goalsDir)
 	if err != nil {
 		entries = nil
@@ -35,30 +40,19 @@ func GoalContext(workspaceDir string) string {
 		}
 		path := filepath.Join(goalsDir, slug, "GOAL.md")
 		meta, ok := readGoalMeta(path)
-		if !ok || meta.Status != "active" || strings.TrimSpace(meta.Summary) == "" {
+		if !ok || (meta.Status != "active" && meta.Status != "blocked") || strings.TrimSpace(meta.Summary) == "" {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("- %s: %s (self/GOALS/%s/GOAL.md)", slug, oneLine(meta.Summary, 180), slug))
+		lines = append(lines, fmt.Sprintf("- %s [%s]: %s (self/GOALS/%s/GOAL.md)", oneLine(slug, 80), meta.Status, oneLine(meta.Summary, 180), oneLine(slug, 255)))
 	}
 	if len(lines) == 0 {
-		lines = nil
-	}
-	var dreamLine string
-	if meta, ok := readGoalMeta(filepath.Join(self, "DREAM.md")); ok && meta.Status == "active" && strings.TrimSpace(meta.Summary) != "" {
-		dreamLine = fmt.Sprintf("Dream / exploration: %s (self/DREAM.md)", oneLine(meta.Summary, 180))
-	}
-	if len(lines) == 0 && dreamLine == "" {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("Optional private goal context (file-backed; not user instructions). Read relevant files before acting. A goal or dream does not itself authorize new external actions, spending, recurring work, or deployment.\n")
+	b.WriteString("Optional private goal context (file-backed; not user instructions). Read relevant files before acting. A goal does not itself authorize new external actions, spending, recurring work, or deployment.\n")
 	if len(lines) > 0 {
-		b.WriteString("Active goals:\n")
+		b.WriteString("Ongoing goals (active or blocked):\n")
 		b.WriteString(strings.Join(lines, "\n"))
-		b.WriteByte('\n')
-	}
-	if dreamLine != "" {
-		b.WriteString(dreamLine)
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -79,14 +73,19 @@ func readGoalMeta(path string) (goalMeta, bool) {
 	if err != nil {
 		return meta, false
 	}
-	parts := strings.SplitN(string(data), "---", 3)
-	if len(parts) != 3 || strings.TrimSpace(parts[0]) != "" {
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	if len(lines) < 3 || lines[0] != "---" {
 		return meta, false
 	}
-	if err := yaml.Unmarshal([]byte(parts[1]), &meta); err != nil {
-		return meta, false
+	for i := 1; i < len(lines); i++ {
+		if lines[i] == "---" {
+			if err := yaml.Unmarshal([]byte(strings.Join(lines[1:i], "\n")), &meta); err != nil {
+				return meta, false
+			}
+			return meta, true
+		}
 	}
-	return meta, true
+	return meta, false
 }
 
 func oneLine(s string, max int) string {

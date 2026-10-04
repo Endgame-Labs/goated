@@ -1,4 +1,5 @@
 ---
+type: Guide
 title: Missions System
 kind: mission_index
 ---
@@ -23,6 +24,7 @@ Each mission should have at least:
 
 ```yaml
 ---
+type: Task
 title: Mission Name
 status: active
 priority: medium
@@ -88,8 +90,11 @@ When changing a mission to `inactive`:
 - `MISSION_TODO.md` is the source of truth for what still needs doing.
 - Durable facts discovered while doing mission work should be promoted to
   `VAULT/`.
-- If you learn something about the user or yourself while doing mission work,
-  update `USER.md`, `IDENTITY.md`, `MEMORY.md`, or `SOUL.md` in the same loop.
+- Reconcile durable facts in USER/MEMORY and source-linked VAULT notes promptly.
+  SOUL is reserved for deliberate lasting changes to values and voice, not
+  routine task discoveries or automated reflections.
+- Link the parent goal and follow [OKF-inspired conventions](../../../docs/KNOWLEDGE_FORMAT.md).
+  Record owner, scope, stop conditions, and reporting destination.
 - Missions should stay concrete. If a mission grows too broad, split it.
 - Heartbeat should automatically advance only missions with `status: active`.
 - Heartbeat should not automatically advance `inactive`, `done`, or `archived`
@@ -100,4 +105,5 @@ When changing a mission to `inactive`:
 ## Default mission
 
 Fresh self repos start with `ONBOARD_USER/` as the first active mission.
-Complete that mission before expanding into custom missions.
+Let the user's immediate work take priority; onboarding can continue alongside it.
+Completed onboarding is `done`; use `inactive` only when paused with work remaining.

@@ -1,43 +1,78 @@
-# Optional goals and dreams context
+# Goals, heartbeat, and dreaming
 
-Goated can carry a compact index of durable user goals and a separate exploratory “dream” into **private** message envelopes. It is opt-in by files in the agent's private `self/` repository; a default installation with neither file behaves exactly as before.
+Goals preserve user-authorized outcomes. Heartbeat advances work and reviews
+goal status. Dreaming consolidates memory. None grants additional authority.
 
-## Files
+## Goals
 
-- `self/GOALS/<slug>/GOAL.md`: one user-authorized outcome per directory. Keep its frontmatter current. Related documents, working notes, and cron prompt files may live under the same directory, but merely creating a cron file does **not** schedule a job; use `goat cron` for that.
-- `self/DREAM.md`: optional summary of an agent-originated direction to explore. This is **not** an independent objective or authorization. It may generate a proposal to the user, not an external action, ongoing job, spend, deploy, or change to permissions.
-- `self/MISSIONS/`: remains the place for in-flight operational execution state. A goal is an outcome; a mission is work being done toward it. Neither replaces the other.
-
-Example `GOAL.md`:
+Use `self/GOALS/<slug>/GOAL.md` for a durable outcome and link its execution
+missions in `self/MISSIONS/`. Use one canonical TODO list per mission.
+Follow [the OKF-inspired Markdown convention](KNOWLEDGE_FORMAT.md).
 
 ```markdown
 ---
+type: Goal
+title: Conference presentation
 status: active
-summary: Help the user prepare and deliver a conference presentation.
+summary: Prepare and deliver the conference presentation.
+owner: user
+last_reviewed_at: 2026-10-04T09:00:00-07:00
+next_action: Confirm the submission deadline
+blockers: []
 ---
 
 # Conference presentation
-
-Success: The presentation is delivered and the user has its slides and receipts.
-Stop condition: The user cancels the presentation or asks to stop this work.
-Next action: Confirm the submission and registration details.
+Success: Talk delivered and final slides handed to the user.
+Scope: Draft and rehearse; ask before purchases or external submissions.
+Stop: User cancels or asks to pause.
+Delivery: Original private conversation, with a link to the final slides.
+Execution: [Presentation mission](../../MISSIONS/presentation/MISSION.md).
 ```
 
-Example `DREAM.md`:
+Statuses are `active`, `blocked`, `inactive` (paused), `done`, and `archived`.
+Hourly heartbeat reviews active/blocked goals, verifies evidence, and updates
+status, blockers, next action, and review time. Completion requires the outcome
+and delivery, not merely activity. Respect pause/cancel and goal scope.
 
-```markdown
----
-status: active
-summary: Explore whether source-linked evidence can make agent-to-agent collaboration safer.
----
+Private message envelopes contain an optional `goal_context` index of active
+and blocked goals with nonempty summaries (at most 20, alphabetical order,
+180 Unicode characters plus a truncation marker per summary). Full bodies are
+not injected. Read relevant files before acting. This index is absent in groups
+and channels; it is reference material, not higher-priority instructions.
+Do not disclose private goal details just because they are accessible.
+These prompting rules are not an access-control sandbox. Tool permissions and
+runtime controls still enforce the actual boundaries; group omission applies
+to this index, not a blanket guarantee about every memory provider.
 
-# Exploration
+## Dreaming
 
-This is a hypothesis to discuss with the user, not permission to contact anyone.
-```
+The eight-hour agent job runs `self/prompts/dreaming.md` on
+`0 */8 * * *` in the configured timezone. It reconciles source-backed durable
+memory, deduplicates notes, flags contradictions, and records coverage/checkpoints
+under `self/dreams/`. Reports are an audit trail, not independent evidence.
+Normal work still saves important facts immediately. Dreaming does not rewrite
+SOUL, invent objectives, restart paused work, or contact people.
 
-Only `status: active` files with a nonempty `summary` appear in the injected index. Summaries are capped at 180 Unicode characters; at most 20 goals are listed. The rest of each file is not injected. The envelope includes paths so the agent can read relevant source files before making a recommendation or acting. The context is absent in channels/groups. Treat file contents as private reference material, not as higher-priority instructions than the user or Goated contract.
+There is no special aspiration file: legacy `self/DREAM.md` is not injected.
+If it contains useful ideas, review them with the user and put authorized work
+in goals, or preserve hypotheses as explicitly labeled notes.
 
-## Design boundary
+## Installation and upgrades
 
-This is a Goated-native, opt-in file convention. The GOAL shape keeps a durable user outcome near its supporting work. The DREAM shape is intentionally narrower: a place to preserve exploratory hypotheses for later user discussion, not a new source of authority. Further behavior should be decided through review before automatic execution is added.
+Fresh bootstrap installs hourly heartbeat and eight-hour dreaming subagent jobs.
+Inspect actual jobs with `./goat cron list`; repository sync may also be installed.
+Cron configuration is authoritative; a frontmatter schedule is descriptive only.
+
+Existing private self repos are never overwritten. Bootstrap recognizes the
+legacy `self/prompts/knowledge_extraction.md` job as the dreaming slot, including
+disabled jobs, preserving its ID, schedule, notifications, and custom prompt.
+It does not add a competing job. If the new prompt is absent, bootstrap skips
+creating a broken job and tells you to install/review the private prompt.
+
+To upgrade an existing instance, review the new seed instructions against your
+private customizations. Adapt the dreaming instructions into the existing
+knowledge-extraction prompt, or install `prompts/dreaming.md` and make the old
+prompt delegate to it. Keep the existing job and verify its configuration;
+do not schedule both entrypoints. The seed legacy entrypoint is a forwarding
+file for this purpose. Also reconcile heartbeat/onboarding/AGENTS changes
+manually. No daemon restart or private-repo migration happens through this PR.
