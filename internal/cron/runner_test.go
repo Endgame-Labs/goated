@@ -95,7 +95,7 @@ func TestRunBoundsConcurrentJobs(t *testing.T) {
 	r, store := testRunner(t)
 	gate := filepath.Join(r.WorkspaceDir, "gate")
 	command := fmt.Sprintf("while [ ! -f %q ]; do sleep 0.01; done", gate)
-	for i := 0; i < maxConcurrentJobs+1; i++ {
+	for i := 0; i < maxConcurrentPerType+1; i++ {
 		if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", command, "UTC", false, false); err != nil {
 			t.Fatal(err)
 		}
@@ -107,8 +107,26 @@ func TestRunBoundsConcurrentJobs(t *testing.T) {
 	r.mu.Lock()
 	count := len(r.running)
 	r.mu.Unlock()
-	if count != maxConcurrentJobs {
-		t.Fatalf("running = %d, want %d", count, maxConcurrentJobs)
+	if count != maxConcurrentPerType+1 {
+		t.Fatalf("scheduled = %d, want %d (the extra job must queue)", count, maxConcurrentPerType+1)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(r.systemSlots) != maxConcurrentPerType && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := len(r.systemSlots); got != maxConcurrentPerType {
+		t.Fatalf("active system jobs = %d, want %d", got, maxConcurrentPerType)
+	}
+	if err := os.WriteFile(gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.Wait()
+	runs, err := os.ReadFile(filepath.Join(r.LogDir, "cron", "runs.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(strings.Split(strings.TrimSpace(string(runs)), "\n")); got != maxConcurrentPerType+1 {
+		t.Fatalf("completed jobs = %d, want %d", got, maxConcurrentPerType+1)
 	}
 }
 
@@ -137,4 +155,23 @@ func TestWaitDrainsCanceledJob(t *testing.T) {
 	if err != nil || !strings.Contains(string(runs), `"status":"error"`) {
 		t.Fatalf("missing canceled run record: %q, %v", runs, err)
 	}
+}
+
+func TestSystemJobRunsWhileAgentSlotsAreFull(t *testing.T) {
+	r, store := testRunner(t)
+	r.systemSlots = make(chan struct{}, maxConcurrentPerType)
+	r.subagentSlots = make(chan struct{}, maxConcurrentPerType)
+	for i := 0; i < maxConcurrentPerType; i++ {
+		r.subagentSlots <- struct{}{}
+	}
+	result := filepath.Join(r.WorkspaceDir, "system-ran")
+	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "",
+		fmt.Sprintf("echo yes > %q", result), "UTC", false, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Run(context.Background(), time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	waitForFile(t, result)
+	r.Wait()
 }

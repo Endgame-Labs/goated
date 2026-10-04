@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,13 +26,15 @@ type Runner struct {
 	Notifier     Notifier
 	Headless     agent.HeadlessRuntime
 
-	mu      sync.Mutex
-	running map[uint64]bool
-	workers sync.WaitGroup
+	mu            sync.Mutex
+	running       map[uint64]bool
+	systemSlots   chan struct{}
+	subagentSlots chan struct{}
+	workers       sync.WaitGroup
 }
 
-// Keep cron execution bounded even when many jobs become due together.
-const maxConcurrentJobs = 4
+// Bound each class separately so long AI work cannot starve cheap system jobs.
+const maxConcurrentPerType = 4
 
 type Notifier interface {
 	SendMessage(ctx context.Context, chatID, text string) error
@@ -62,6 +65,8 @@ func (r *Runner) Run(ctx context.Context, now time.Time) error {
 	if err := os.MkdirAll(filepath.Join(r.LogDir, "cron", "jobs"), 0o755); err != nil {
 		return fmt.Errorf("mkdir cron jobs log dir: %w", err)
 	}
+	// Launch system checks first; both classes retain their own bounded queue.
+	sort.SliceStable(jobs, func(i, j int) bool { return jobs[i].Type == "system" && jobs[j].Type != "system" })
 
 	for _, job := range jobs {
 		r.mu.Lock()
@@ -77,14 +82,12 @@ func (r *Runner) Run(ctx context.Context, now time.Time) error {
 			r.mu.Unlock()
 			return ctx.Err()
 		}
-		if len(r.running) >= maxConcurrentJobs {
-			fmt.Fprintf(os.Stderr, "[%s] cron #%d skipped: %d jobs already running\n",
-				time.Now().Format(time.RFC3339), job.ID, maxConcurrentJobs)
-			r.mu.Unlock()
-			continue
-		}
 		if r.running == nil {
 			r.running = make(map[uint64]bool)
+		}
+		if r.systemSlots == nil {
+			r.systemSlots = make(chan struct{}, maxConcurrentPerType)
+			r.subagentSlots = make(chan struct{}, maxConcurrentPerType)
 		}
 		r.running[job.ID] = true
 		r.workers.Add(1)
@@ -102,6 +105,18 @@ func (r *Runner) runJob(ctx context.Context, minute time.Time, job db.CronJob) {
 		delete(r.running, job.ID)
 		r.mu.Unlock()
 	}()
+	r.mu.Lock()
+	slots := r.subagentSlots
+	if job.Type == "system" {
+		slots = r.systemSlots
+	}
+	r.mu.Unlock()
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+	case <-ctx.Done():
+		return
+	}
 	rec, err := r.runOne(ctx, minute, job)
 	if err == nil {
 		// Serialize JSONL writes from independently finishing workers.
