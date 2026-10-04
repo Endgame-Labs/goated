@@ -45,7 +45,7 @@ func (h CommandHook) Apply(ctx context.Context, chunks []Chunk, state HookContex
 	}
 	cmd.Stdout = &limitedWriter{w: &out, n: max}
 	cmd.Stderr = &limitedWriter{w: &stderr, n: 2048}
-	if err := cmd.Run(); err != nil {
+	if err := runCommand(cmd); err != nil {
 		return nil, fmt.Errorf("memory hook: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return ParseResults(out.Bytes())

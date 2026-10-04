@@ -117,6 +117,9 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 
 	// Log the user message with status=pending
 	s.logUserMessage(requestID, msg, msglog.StatusPending)
+	// Enrich before queueing as compactAndFlush dispatches queued messages
+	// directly. Keep this turn's request ID for history exclusion.
+	s.enrichMemory(ctx, &msg)
 
 	// If we're currently compacting, queue this message
 	s.mu.Lock()
@@ -127,7 +130,6 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 			"Received your additional steering message. Will add it to the queue for once I'm done compacting...")
 	}
 	s.mu.Unlock()
-	s.enrichMemory(ctx, &msg)
 
 	// Check session health before sending; retry with restart up to 5 times
 	if err := s.ensureHealthySession(ctx, responder); err != nil {

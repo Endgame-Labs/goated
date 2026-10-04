@@ -113,7 +113,7 @@ func (s CommandSearcher) Search(ctx context.Context, query string) ([]Chunk, err
 	cmd.Stdout = &limitedWriter{w: &out, n: max}
 	var stderr bytes.Buffer
 	cmd.Stderr = &limitedWriter{w: &stderr, n: 2048}
-	if err := cmd.Run(); err != nil {
+	if err := runCommand(cmd); err != nil {
 		return nil, fmt.Errorf("memory search: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return ParseResults(out.Bytes())
@@ -258,6 +258,9 @@ func (e Engine) Retrieve(ctx context.Context, query string, history History) ([]
 			continue
 		}
 		chunks = next
+		if len(chunks) > max {
+			chunks = chunks[:max]
+		}
 	}
 	if chunks == nil {
 		return []Chunk{}, nil

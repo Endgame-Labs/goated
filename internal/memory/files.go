@@ -47,6 +47,11 @@ func (s FileSearcher) Search(ctx context.Context, query string) ([]Chunk, error)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			// WalkDir does not follow directory symlinks, but ReadFile follows
+			// file symlinks. Exclude both, including selected search roots.
+			if d.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
 			if d.IsDir() {
 				if path != root && skip[d.Name()] {
 					return filepath.SkipDir
@@ -65,7 +70,7 @@ func (s FileSearcher) Search(ctx context.Context, query string) ([]Chunk, error)
 				return filepath.SkipAll
 			}
 			info, err := d.Info()
-			if err != nil || info.Size() > 256<<10 {
+			if err != nil || !info.Mode().IsRegular() || info.Size() > 256<<10 {
 				return nil
 			}
 			data, err := os.ReadFile(path)
@@ -198,14 +203,28 @@ func wordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 func fileSearchRoots(workspace string) []string {
 	self := filepath.Join(workspace, "self")
-	if info, err := os.Stat(self); err != nil || !info.IsDir() {
+	if info, err := os.Lstat(self); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	} else if err != nil || !info.IsDir() {
 		return []string{workspace}
 	}
 	var roots []string
+	var rootInfos []os.FileInfo
 	for _, name := range []string{"MEMORY.md", "USER.md", "SOUL.md", "memory", "vault", "VAULT", "MISSIONS", "missions", "notes", "knowledge"} {
 		p := filepath.Join(self, name)
-		if _, err := os.Stat(p); err == nil {
+		if info, err := os.Lstat(p); err == nil && info.Mode()&os.ModeSymlink == 0 {
+			duplicate := false
+			for _, prior := range rootInfos {
+				if os.SameFile(prior, info) {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
+				continue
+			}
 			roots = append(roots, p)
+			rootInfos = append(rootInfos, info)
 		}
 	}
 	if len(roots) == 0 {
