@@ -325,30 +325,50 @@ var daemonRunCmd = &cobra.Command{
 
 		gatewayErr := runGateway()
 		cancel()
-		<-cronDone        // stop dispatch before waiting for its workers
-		cronRunner.Wait() // workers use the store and notifier
-		if gatewayErr != nil && gatewayErr != context.Canceled {
-			return fmt.Errorf("gateway: %w", gatewayErr)
-		}
-
-		// Wait for in-flight message handlers to finish before exiting
-		fmt.Fprintf(os.Stderr, "[%s] shutting down, waiting for in-flight messages...\n",
+		// Bound all shutdown work, including cron dispatch and workers, by
+		// one deadline. Drain messages even when the gateway exits with an error.
+		fmt.Fprintf(os.Stderr, "[%s] shutting down, waiting for cron workers and in-flight messages...\n",
 			time.Now().Format(time.RFC3339))
-		done := make(chan struct{})
-		go func() {
-			svc.WaitInflight()
-			close(done)
-		}()
-		select {
-		case <-done:
-			fmt.Fprintf(os.Stderr, "[%s] all messages flushed, exiting\n",
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer shutdownCancel()
+		if waitDaemonWorkers(shutdownCtx, cronDone, cronRunner.Wait, svc.WaitInflight) {
+			fmt.Fprintf(os.Stderr, "[%s] all cron workers and messages finished, exiting\n",
 				time.Now().Format(time.RFC3339))
-		case <-time.After(2 * time.Minute):
+		} else {
 			fmt.Fprintf(os.Stderr, "[%s] flush timeout (2m), exiting anyway\n",
 				time.Now().Format(time.RFC3339))
 		}
+		if gatewayErr != nil && gatewayErr != context.Canceled {
+			return fmt.Errorf("gateway: %w", gatewayErr)
+		}
 		return nil
 	},
+}
+
+// Stop cron dispatch before calling its Wait: the runner may still add workers.
+// Message draining proceeds concurrently, and neither drain can bypass ctx.
+func waitDaemonWorkers(ctx context.Context, cronDone <-chan struct{}, waitCron, waitMessages func()) bool {
+	done := make(chan struct{}, 2)
+	go func() {
+		select {
+		case <-cronDone:
+			waitCron()
+			done <- struct{}{}
+		case <-ctx.Done():
+		}
+	}()
+	go func() {
+		waitMessages()
+		done <- struct{}{}
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	return true
 }
 
 type daemonSendRequest struct {

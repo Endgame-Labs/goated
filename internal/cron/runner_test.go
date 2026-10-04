@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"goated/internal/agent"
 	"goated/internal/db"
 )
 
@@ -22,6 +23,57 @@ func testRunner(t *testing.T) (*Runner, *db.Store) {
 	}
 	t.Cleanup(func() { store.Close() })
 	return &Runner{Store: store, WorkspaceDir: dir, LogDir: dir}, store
+}
+
+type blockingVersionRuntime struct {
+	agent.HeadlessRuntime
+	started chan context.Context
+	release chan struct{}
+}
+
+func (r *blockingVersionRuntime) Descriptor() agent.RuntimeDescriptor {
+	return agent.RuntimeDescriptor{}
+}
+
+func (r *blockingVersionRuntime) Version(ctx context.Context) string {
+	r.started <- ctx
+	select {
+	case <-ctx.Done():
+	case <-r.release:
+	}
+	return ""
+}
+
+func TestCancellationDrainsRuntimeVersionProbe(t *testing.T) {
+	r, store := testRunner(t)
+	runtime := &blockingVersionRuntime{started: make(chan context.Context, 1), release: make(chan struct{})}
+	r.Headless = runtime
+	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", "true", "UTC", "", false, false); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); close(runtime.release); r.Wait() }()
+	if err := r.Run(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var probeCtx context.Context
+	select {
+	case probeCtx = <-runtime.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("version probe never started")
+	}
+	deadline, ok := probeCtx.Deadline()
+	if !ok || time.Until(deadline) > runtimeVersionTimeout {
+		t.Error("version probe must have a bounded deadline")
+	}
+	cancel()
+	done := make(chan struct{})
+	go func() { r.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runtime version probe blocked shutdown after cancellation")
+	}
 }
 
 func waitForFile(t *testing.T, path string) {

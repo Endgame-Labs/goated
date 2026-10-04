@@ -117,6 +117,9 @@ func (r *Runner) runJob(ctx context.Context, minute time.Time, job db.CronJob) {
 	case <-ctx.Done():
 		return
 	}
+	if ctx.Err() != nil {
+		return
+	}
 	rec, err := r.runOne(ctx, minute, job)
 	if err == nil {
 		// Serialize JSONL writes from independently finishing workers.
@@ -161,8 +164,12 @@ func (r *Runner) dueJobs(nowMinute time.Time) ([]db.CronJob, error) {
 }
 
 const cronJobTimeout = 1 * time.Hour
+const runtimeVersionTimeout = 5 * time.Second
 
 func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob) (runRecord, error) {
+	jobCtx, jobCancel := context.WithTimeout(ctx, cronJobTimeout)
+	defer jobCancel()
+
 	runMinute := nowMinute.Format(time.RFC3339)
 	notifyUser := job.EffectiveNotifyUser()
 	notifyMainSession := job.EffectiveNotifyMainSession()
@@ -172,7 +179,9 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 	}
 	runtimeMeta := db.ExecutionRuntime{}
 	if r.Headless != nil {
-		version := r.Headless.Version(context.Background())
+		versionCtx, versionCancel := context.WithTimeout(jobCtx, runtimeVersionTimeout)
+		version := r.Headless.Version(versionCtx)
+		versionCancel()
 		runtimeMeta = db.ExecutionRuntime{
 			Provider: string(r.Headless.Descriptor().Provider),
 			Mode:     "headless_exec",
@@ -183,9 +192,6 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 	if err := r.Store.RecordCronRun(job.ID, runMinute, "started", "", "", runtimeMeta); err != nil {
 		return runRecord{}, fmt.Errorf("insert cron run: %w", err)
 	}
-
-	jobCtx, jobCancel := context.WithTimeout(ctx, cronJobTimeout)
-	defer jobCancel()
 
 	jobLog := filepath.Join(r.LogDir, "cron", "jobs", fmt.Sprintf("%s-cron-%d.log", nowMinute.Format("20060102-1504"), job.ID))
 
