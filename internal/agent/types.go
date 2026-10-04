@@ -121,6 +121,7 @@ type MessageContext struct {
 	ReplyToText     string // text of the message being replied to (empty if not a reply)
 	ReplyToUserName string // display name of the author of the replied-to message
 	RetrievedMemory string // reference material from gateway memory search
+	GoalContext     string // optional private goal index, not user instructions
 }
 
 type SessionRuntime interface {

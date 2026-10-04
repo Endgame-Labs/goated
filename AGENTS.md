@@ -51,12 +51,13 @@ Use the daemon management command — it waits for in-flight messages to flush:
 
 ```bash
 gofmt -w .              # format Go files before committing
-go build ./...          # quick compile check
+go test ./...           # automated tests
 go vet ./...            # static analysis check before committing
 ./build.sh              # full build
 ```
 
-No automated tests yet. Test manually by sending messages through the gateway.
+Automated tests cover core behavior; use gateway messages for additional manual checks
+only against an explicitly selected running instance.
 
 ## Machine setup
 

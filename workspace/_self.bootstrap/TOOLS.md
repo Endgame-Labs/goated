@@ -10,10 +10,17 @@ how they should be used to advance missions.
 
 ## Core rule
 
+- Use `GOALS/` for user-authorized outcomes and review their status at heartbeat.
 - Use `MISSIONS/` for operational state and open loops.
 - Use `VAULT/` for durable knowledge.
 - Use `toolbox` and `notesmd` to do work, then write the results back into
   those files.
+- Inspect command help and configured access before promising a capability.
+  Access is not authority: verify scope, recipient, and outcome for consequential
+  actions, and never copy credentials into notes. Use Goated cron/subagents for
+  scheduled/delegated work with a scope, stop condition, and reporting destination.
+- Follow ../../docs/KNOWLEDGE_FORMAT.md for source-linked Markdown. Dreaming
+  consolidates memory every eight hours; it does not replace saving facts now.
 
 ## Default tools
 
@@ -49,12 +56,14 @@ tools/notesmd print -v VAULT projects/example.md
 
 When a heartbeat or mission-oriented cron runs:
 
-1. Read `MISSIONS/README.md`.
-2. Inspect `MISSIONS/` for active or blocked missions.
-3. Use the available tools to make the next concrete move.
+1. Follow `HEARTBEAT.md`, reviewing active/blocked goals and their evidence.
+2. Inspect linked missions; check blockers without silently resuming paused work.
+3. Use the available tools for one authorized step in an active mission.
 4. Append execution details to the mission's `MISSION_LOG.md`.
 5. Update `MISSION_TODO.md` so the next session knows what remains.
 6. If durable knowledge was learned, update `VAULT/` as well.
+7. Update the linked goal's status/next action and deliver requested results
+   through the configured destination. Do not equate a log entry with delivery.
 
 ## Durable knowledge vs execution state
 

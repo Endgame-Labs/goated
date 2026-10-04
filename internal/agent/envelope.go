@@ -48,6 +48,9 @@ func BuildPromptEnvelope(channel, chatID, userPrompt string, attachments *Messag
 		if msgCtx.RetrievedMemory != "" {
 			kvs = append(kvs, pydict.KV{Key: "retrieved_memory", Value: msgCtx.RetrievedMemory})
 		}
+		if msgCtx.GoalContext != "" {
+			kvs = append(kvs, pydict.KV{Key: "goal_context", Value: msgCtx.GoalContext})
+		}
 	}
 
 	if messageID != "" {
@@ -135,6 +138,9 @@ func BuildBatchEnvelope(channel, chatID string, messages []PromptMessage) string
 			}
 			if m.Context.RetrievedMemory != "" {
 				item["retrieved_memory"] = m.Context.RetrievedMemory
+			}
+			if m.Context.GoalContext != "" {
+				item["goal_context"] = m.Context.GoalContext
 			}
 		}
 		if m.Attachments != nil {

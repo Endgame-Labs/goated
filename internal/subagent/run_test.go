@@ -22,7 +22,10 @@ func TestRunBackgroundCommandPreservesStdinAndFinishRunID(t *testing.T) {
 
 	helperPath := filepath.Join(dir, "finish-helper")
 	helperArgsPath := filepath.Join(dir, "helper.args")
-	helper := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(helperArgsPath) + "\n"
+	// Publish atomically: file existence must mean all arguments are written.
+	// Otherwise the reader can observe printf's partially written output.
+	helper := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(helperArgsPath+".tmp") +
+		" && mv " + shellQuote(helperArgsPath+".tmp") + " " + shellQuote(helperArgsPath) + "\n"
 	if err := os.WriteFile(helperPath, []byte(helper), 0o700); err != nil {
 		t.Fatalf("write helper: %v", err)
 	}
@@ -54,7 +57,9 @@ func TestRunBackgroundCommandPreservesStdinAndFinishRunID(t *testing.T) {
 		t.Fatalf("PID = %d, want positive", result.PID)
 	}
 
-	waitForFile(t, stdinOut)
+	// The finish helper runs after the child exits, so this also establishes
+	// that the child's stdin output is complete, not merely created.
+	waitForFile(t, helperArgsPath)
 	stdinData, err := os.ReadFile(stdinOut)
 	if err != nil {
 		t.Fatalf("read stdin output: %v", err)
@@ -63,7 +68,6 @@ func TestRunBackgroundCommandPreservesStdinAndFinishRunID(t *testing.T) {
 		t.Fatalf("stdin output = %q", string(stdinData))
 	}
 
-	waitForFile(t, helperArgsPath)
 	argsData, err := os.ReadFile(helperArgsPath)
 	if err != nil {
 		t.Fatalf("read helper args: %v", err)

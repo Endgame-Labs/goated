@@ -31,6 +31,7 @@ type Service struct {
 	AdminChatID     string // chat ID for escalation alerts
 	MsgLogger       *msglog.Logger
 	Memory          *memory.Engine // optional pre-dispatch retrieval and filtering
+	WorkspaceDir    string         // optional private goal/dream context source
 	SessionIDPath   string         // path to runtime session/thread ID file for lifecycle tracking
 
 	// DrainCtx is a context that stays alive during graceful shutdown so
@@ -120,6 +121,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 	// Enrich before queueing as compactAndFlush dispatches queued messages
 	// directly. Keep this turn's request ID for history exclusion.
 	s.enrichMemory(ctx, &msg)
+	s.enrichGoals(&msg)
 
 	// If we're currently compacting, queue this message
 	s.mu.Lock()
@@ -190,6 +192,7 @@ func (s *Service) HandleBatchMessage(ctx context.Context, msgs []IncomingMessage
 		}
 		s.logUserMessage(requestID, msgs[i], msglog.StatusPending)
 		s.enrichMemory(ctx, &msgs[i])
+		s.enrichGoals(&msgs[i])
 
 		promptMsgs = append(promptMsgs, agent.PromptMessage{
 			Text:        msgs[i].Text,
@@ -300,6 +303,24 @@ func (s *Service) enrichMemory(ctx context.Context, msg *IncomingMessage) {
 		return // memory failures never prevent delivery
 	}
 	msg.RetrievedMemory = memory.Format(chunks)
+}
+
+// enrichGoals reads only compact private metadata. Group contexts intentionally do
+// not receive this material, because goals may contain private user information.
+func (s *Service) enrichGoals(msg *IncomingMessage) {
+	if s.WorkspaceDir == "" || !privateGoalChat(*msg) {
+		return
+	}
+	msg.GoalContext = agent.GoalContext(s.WorkspaceDir)
+}
+
+func privateGoalChat(msg IncomingMessage) bool {
+	if msg.ChatType != "" {
+		return msg.ChatType == "private"
+	}
+	// Slack's connector does not currently populate ChatType. D-prefixed IDs
+	// are direct messages; channels and group DMs must not get private context.
+	return msg.Channel == "slack" && strings.HasPrefix(msg.ChatID, "D")
 }
 
 // logCommand logs a command invocation if the logger is configured.
@@ -655,7 +676,7 @@ func isAuthSummary(summary string) bool {
 // msgAttachments converts gateway attachment data into the agent-layer struct.
 // Returns nil if the message has no attachments.
 func msgContext(msg IncomingMessage) *agent.MessageContext {
-	if msg.UserID == "" && msg.UserName == "" && msg.UserUsername == "" && msg.ChatType == "" && msg.ReplyToText == "" && msg.ReplyToUserName == "" && msg.RetrievedMemory == "" {
+	if msg.UserID == "" && msg.UserName == "" && msg.UserUsername == "" && msg.ChatType == "" && msg.ReplyToText == "" && msg.ReplyToUserName == "" && msg.RetrievedMemory == "" && msg.GoalContext == "" {
 		return nil
 	}
 	return &agent.MessageContext{
@@ -666,6 +687,7 @@ func msgContext(msg IncomingMessage) *agent.MessageContext {
 		ReplyToText:     msg.ReplyToText,
 		ReplyToUserName: msg.ReplyToUserName,
 		RetrievedMemory: msg.RetrievedMemory,
+		GoalContext:     msg.GoalContext,
 	}
 }
 

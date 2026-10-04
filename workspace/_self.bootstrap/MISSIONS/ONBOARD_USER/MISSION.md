@@ -1,138 +1,54 @@
 ---
+type: Task
 title: ONBOARD_USER
 status: active
 priority: high
-goal: Establish a durable user profile, explain how this self repo works, and leave the user knowing how to extend it
-created_at: 2026-03-19
-last_advanced_at: 2026-03-19T00:00:00Z
-next_action: Start a real onboarding conversation with the user and capture durable facts immediately
+goal: Establish useful continuity and explain goals, dreaming, memory, and tools
+next_action: Learn what the user wants help with first
 blockers: []
 ---
 
-# ONBOARD_USER
+# Onboard the user
 
-This is the default first mission for a freshly bootstrapped `self/` repo.
+Start naturally on the first conversation; do not wait for heartbeat. Prioritize
+the user's actual work and spread onboarding across conversations as useful.
+Use plain language while matching their expertise. Do not repeat completed steps.
+`MISSION_TODO.md` is the checklist; `MISSION_LOG.md` records evidence of progress.
 
-This mission is mirrored by the `<onboarding>...</onboarding>` block in
-`AGENTS.md`. While onboarding is active, that block should remain present. Once
-onboarding is complete, mark this mission `inactive` and delete that XML block
-from `AGENTS.md` in the same processing loop.
+Explain the important pieces with concrete examples:
 
-## Mission outcome
+- **Goals:** durable outcomes in `GOALS/<slug>/GOAL.md`; missions hold execution
+  plans and TODOs. Agree on success, owner, scope, stop conditions, and delivery.
+  The hourly heartbeat reviews goal status and advances authorized active work.
+  Blocked work gets a status check; paused work is not silently restarted.
+- **Dreaming:** an eight-hour scheduled pass reconciles and deduplicates memory
+  against original sources. It is not an autonomous aspiration or new permission.
+  Explain how to inspect, pause, or change schedules with Goated tools; verify
+  actual installed jobs before describing them. Repository sync may also run.
+- **Memory:** private `self/` persists across sessions. `MEMORY.md` is a small
+  index; `VAULT/` holds detailed sourced knowledge; `USER.md` links their person
+  note. Use readable Markdown with YAML frontmatter, links, and checkboxes
+  (see the OKF-inspired knowledge guide). Explain how to correct saved facts.
+  `IDENTITY.md` names the role; `SOUL.md` holds deliberately chosen voice/values.
+- **Tools:** show relevant available capabilities and real limits. Users can ask
+  for a new tool or a scheduled task in plain English. Check installed tools
+  before promising access. Discuss browser/email only if useful; integrations,
+  accounts, spending, recipients, and recurring actions need appropriate scope.
+  Tool access does not authorize unrelated actions; credentials stay out of notes.
 
-Success means:
-- the user understands the basic `self/` layout
-- the user understands the default scheduled jobs
-- the user knows they can ask for new tools and new scheduled jobs in plain English
-- `IDENTITY.md`, `USER.md`, and related files contain real durable facts
-- the user's person note exists in `VAULT/people/`
-- `USER.md` links to that person note
+Ask only what helps: first priority, communication preferences, timezone,
+ongoing commitments, and desired autonomy/reporting boundaries. Capture durable
+answers immediately in the appropriate files, with sources when available.
+Create one person note in `VAULT/people/` using `tools/toolbox notes` when
+available (plain Markdown also works), then link it from `USER.md`.
 
-## Conversation goals
+Offer optional browser, email, personal tools, and additional schedules without
+making them prerequisites. Explain that jobs persist until disabled/deleted;
+a run is bounded, and recurrence is not permission for unlimited work.
+Show a brief progress checklist when helpful, not after every message.
 
-During onboarding, explain:
-- what you can help with in plain language before explaining any internals
-- ongoing work, saved notes, and recurring check-ins in plain language first
-- `MISSIONS/`, `VAULT/`, and `HEARTBEAT.md` only after the plain-language
-  explanation
-- that `HEARTBEAT.md` and knowledge extraction are the only built-in scheduled
-  jobs, if the user wants that level of detail
-- if you use the word "cron", explain it as a recurring scheduled prompt in
-  everyday language
-
-Tell the user they can always ask you what tools you have.
-
-Give concrete examples of extensibility, including examples like:
-- "Make a new tool for checking my Gmail."
-- "Let's set up your web browser. How do I give you a budget for that?"
-- "Schedule a new job every weekday morning at 7am that does X."
-- "List all crons."
-- "List all scheduled jobs."
-
-Also direct the user to give the agent its own email account. Recommend:
-- AgentMail for a simple agent-specific inbox
-- Gmail if the user prefers using an existing Google-based account
-
-## Tone
-
-- Assume the user is nontechnical unless they clearly show otherwise.
-- Do not introduce yourself primarily as software infrastructure.
-- Prefer short, helpful, everyday phrasing.
-- Only introduce technical details when they are useful to the user.
-
-## How to present onboarding progress
-
-During the onboarding conversation:
-- render the current onboarding TODO state as a code block
-- use `[x]` for completed items and `[ ]` for remaining items
-- update that code block as items are completed so the user can see progress
-- after showing the code block, present the remaining next-step options as a numbered list
-- let the user guide which numbered item to do next when there is a real choice
-- keep the numbered list aligned with `MISSION_TODO.md`
-
-Example format:
-
-```text
-Current onboarding TODOs:
-
-[x] Explain the `self/` repo layout
-[x] Explain the built-in scheduled jobs
-[ ] Ask questions to fill in `USER.md`, `IDENTITY.md`, and `MEMORY.md`
-[ ] Ask whether browser automation should be configured
-[ ] Recommend giving the agent its own email account
-
-Which one do you want to do next?
-1. Fill in profile, identity, and memory details
-2. Decide whether to set up browser automation
-3. Decide whether to set up an email inbox
-```
-
-When there is no meaningful choice, continue the next required item directly and
-still show the updated TODO code block.
-
-## Required onboarding questions
-
-Ask enough questions to populate:
-- `USER.md`
-- `IDENTITY.md`, if the user has preferences about your name, tone, or role
-- `MEMORY.md`, if the user shares durable context worth loading every session
-
-Useful topics:
-- what the user wants help with first
-- current missions and recurring responsibilities
-- communication style and tone preferences
-- timezone and schedule preferences
-- whether they want browser automation
-- whether they want an email inbox set up now
-- whether they want additional scheduled jobs beyond the built-ins
-
-## Required file updates
-
-As soon as you learn durable facts:
-- update `USER.md`, `IDENTITY.md`, `MEMORY.md`, or `SOUL.md` immediately
-- do not wait until later in the session
-
-Once you know enough about the user:
-1. Use `tools/toolbox notes` to create a person note in `VAULT/people/`.
-2. Write durable facts there.
-3. Link that person note from `USER.md`.
-
-Prefer one person note for the user, not duplicates.
-
-## When to mark this mission inactive
-
-Mark `ONBOARD_USER` as `inactive` once all of these are true:
-- `USER.md` contains meaningful durable information
-- `USER.md` links to the user's note in `VAULT/people/`
-- the user has been told how `self/`, `MISSIONS/`, `VAULT/`, and `TOOLS.md`
-  work
-- the user has been told that `HEARTBEAT.md` and knowledge extraction are the
-  built-in scheduled jobs
-- any remaining optional setup work has been deferred into another mission or
-  left as explicit TODOs
-
-When marking it inactive:
-- set `status: inactive`
-- set `next_action` to the condition that would justify resuming onboarding
-- write a short explanation in `MISSION_LOG.md`
-- remove the `<onboarding>...</onboarding>` block from `AGENTS.md`
+Finish with `status: done` when the required checklist is complete and the user
+has the explanation/result. Log completion, leave optional work explicitly
+deferred, and set `next_action: none`. If the user pauses onboarding, use
+`inactive` and record the resume condition instead. Do not delete instructions
+from AGENTS.md; the mission's status is the source of truth.

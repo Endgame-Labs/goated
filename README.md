@@ -196,14 +196,21 @@ Everything committed in `workspace/` is **depersonalized and reusable** — it's
 
 **Gitignored (personal, lives in `workspace/self/`):**
 
-- `IDENTITY.md` — name, personality, voice
+- `IDENTITY.md` — stable name and role
 - `MEMORY.md` — long-term memory (loaded every session)
 - `USER.md` — info about the human they work with
-- `SOUL.md` — values and beliefs
+- `SOUL.md` — deliberate values, voice, and judgment
 - `AGENTS.md` — workspace conventions and safety rules
-- `TODO.md` — agent's personal task list
-- `HEARTBEAT.md` — heartbeat/pulse config and prompts
+- `GOALS/` — durable outcomes reviewed during heartbeat
+- `MISSIONS/` — execution plans, canonical TODOs, and progress logs
+- `TODO.md` — optional index linking canonical tasks
+- `HEARTBEAT.md` — hourly goal reviews and authorized mission progress
+- `prompts/dreaming.md` — eight-hour source-backed memory consolidation
+- `dreams/` — dreaming reports and coverage checkpoints
 - Projects, notes, drafts, tools, and anything else the agent creates
+
+See [goals and dreaming](docs/GOALS_AND_DREAMS.md) and the
+[OKF-inspired Markdown guide](docs/KNOWLEDGE_FORMAT.md) for memory, goals, and tasks.
 
 Bootstrap creates `workspace/self/` as its own Git repo. We recommend connecting it to a private remote. This lets the agent:
 

@@ -160,6 +160,7 @@ func ensureDefaultSelfCrons(store *db.Store, workspaceDir, timezone string) erro
 	defaults := []struct {
 		schedule          string
 		promptFile        string
+		legacyPromptFile  string
 		label             string
 		notifyMainSession bool
 	}{
@@ -171,8 +172,9 @@ func ensureDefaultSelfCrons(store *db.Store, workspaceDir, timezone string) erro
 		},
 		{
 			schedule:          "0 */8 * * *",
-			promptFile:        filepath.Join(selfDir, "prompts", "knowledge_extraction.md"),
-			label:             "knowledge extraction",
+			promptFile:        filepath.Join(selfDir, "prompts", "dreaming.md"),
+			legacyPromptFile:  filepath.Join(selfDir, "prompts", "knowledge_extraction.md"),
+			label:             "dreaming",
 			notifyMainSession: true,
 		},
 	}
@@ -185,13 +187,18 @@ func ensureDefaultSelfCrons(store *db.Store, workspaceDir, timezone string) erro
 	for _, def := range defaults {
 		found := false
 		for _, job := range existing {
-			if job.Type == "subagent" && job.PromptFile == def.promptFile {
+			if job.Type == "subagent" && (job.PromptFile == def.promptFile ||
+				(def.legacyPromptFile != "" && job.PromptFile == def.legacyPromptFile)) {
 				found = true
 				break
 			}
 		}
 		if found {
 			fmt.Printf("Default %s cron already exists.\n", def.label)
+			continue
+		}
+		if info, err := os.Stat(def.promptFile); err != nil || !info.Mode().IsRegular() {
+			fmt.Printf("Skipping default %s cron: review/install %s first (existing private prompts are not overwritten).\n", def.label, def.promptFile)
 			continue
 		}
 		if _, err := store.AddCronWithNotifications("subagent", "", def.schedule, "", def.promptFile, "", timezone, "", false, def.notifyMainSession); err != nil {

@@ -49,7 +49,7 @@ func BuildSessionPreamble(workspaceDir string) string {
 			sb.WriteString("--- BEGIN self/MISSIONS/ONBOARD_USER/MISSION.md ---\n")
 			sb.Write(data)
 			sb.WriteString("\n--- END self/MISSIONS/ONBOARD_USER/MISSION.md ---\n\n")
-			sb.WriteString("*** IMPORTANT: The ONBOARD_USER mission is active. Follow it immediately — do not wait for the user to ask. ***\n\n")
+			sb.WriteString("*** The ONBOARD_USER mission is active. Begin naturally in the next user conversation, while prioritizing the user's immediate task. Do not repeat completed checklist items or let onboarding override a scoped background assignment. ***\n\n")
 		}
 	}
 

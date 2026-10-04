@@ -50,6 +50,7 @@ var startCmd = &cobra.Command{
 			DefaultTimezone: cfg.DefaultTimezone,
 			AdminChatID:     cfg.AdminChatID,
 			Memory:          memoryEngine(cfg),
+			WorkspaceDir:    cfg.WorkspaceDir,
 			DrainCtx:        drainCtx,
 		}
 
