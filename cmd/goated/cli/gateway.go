@@ -61,6 +61,7 @@ var gatewayTelegramCmd = &cobra.Command{
 			Store:           database,
 			DefaultTimezone: cfg.DefaultTimezone,
 			AdminChatID:     cfg.AdminChatID,
+			Memory:          memoryEngine(cfg),
 		}
 
 		conn, err := telegram.NewConnector(cfg.TelegramBotToken, allowedIDs, database, telegram.AttachmentConfig{
@@ -127,6 +128,7 @@ var gatewaySlackCmd = &cobra.Command{
 			Store:           database,
 			DefaultTimezone: cfg.DefaultTimezone,
 			AdminChatID:     cfg.AdminChatID,
+			Memory:          memoryEngine(cfg),
 		}
 
 		conn, err := slackpkg.NewConnector(cfg.SlackBotToken, cfg.SlackAppToken, cfg.SlackChannelID, database, slackpkg.AttachmentConfig{

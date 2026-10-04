@@ -527,3 +527,23 @@ See [SECURITY.md](SECURITY.md) for private vulnerability reporting guidance.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build and PR expectations.
+
+### Optional per-turn memory retrieval
+
+Goated has a runtime-independent, best-effort memory hook. Configure `memory.search_command` in `goated.json` as an **argv array**, not a shell string. Goated runs the command before dispatching each normal user turn (including queued batches), appending the current user message as the final argument unless an argument contains `{query}`. The command can return `[{"source":"path","text":"..."}]` JSON, or sectioned text of the form `--- [file] path ---` (as produced by `alan remember`). The standardized `./goat memory search "query"` command exposes the configured provider and prints JSON chunks.
+
+For Alan's private installation, use:
+
+```json
+{
+  "memory": {
+    "search_command": ["self/tools/alan", "remember", "{query}"],
+    "max_chunks": 12,
+    "jev": {"enabled": true, "model": "jev-latest", "threshold": 0.5}
+  }
+}
+```
+
+Set `TYPESAFE_API_KEY` with `./goat creds set TYPESAFE_API_KEY ...` (or an environment variable), **not** in `goated.json`. With Jev enabled and a key available, each chunk is judged concurrently using TypeSafe's `POST /v1/systemone` `noul` answer. The state includes the current message, four prior user messages, four truncated prior assistant responses, an explicitly extractive older-conversation summary, and one source-linked chunk. Accepted chunks arrive in the agent envelope's separate `retrieved_memory` field. The memory is reference material, not a user or system instruction.
+
+Search and Jev failures never block the user's turn. If the key is absent, Goated returns the unfiltered search results; if a Jev call fails, that chunk is retained rather than silently discarded. Search is capped at 3 seconds/128 KiB and the parallel Jev stage at 5 seconds. The history comes from Goated's retained daily message logs, so fewer than four prior turns may be available after log retention or on a fresh install. This hook sends selected private conversation and memory text to TypeSafe when enabled; deploy only with appropriate authorization and data-handling policy. The hook is not a substitute for the agent's own verification of retrieved facts.

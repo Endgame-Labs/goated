@@ -1,0 +1,44 @@
+package cli
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/spf13/cobra"
+	"goated/internal/app"
+	"goated/internal/memory"
+)
+
+func memoryEngine(cfg app.Config) *memory.Engine {
+	if len(cfg.MemorySearchCommand) == 0 {
+		return nil
+	}
+	engine := &memory.Engine{Searcher: memory.CommandSearcher{Args: cfg.MemorySearchCommand, Dir: cfg.WorkspaceDir, Timeout: 3 * time.Second}, MaxChunks: cfg.MemoryMaxChunks, Parallel: 4, Timeout: 5 * time.Second}
+	if cfg.MemoryJevEnabled {
+		if key := memory.KeyFromFile(cfg.WorkspaceDir); key != "" {
+			engine.Judge = memory.JevJudge{APIKey: key, URL: cfg.MemoryJevURL, Model: cfg.MemoryJevModel, Threshold: cfg.MemoryJevThreshold}
+		} else {
+			fmt.Fprintln(os.Stderr, "[memory] Jev enabled but TYPESAFE_API_KEY missing; returning unfiltered search results")
+		}
+	}
+	return engine
+}
+
+var memoryCmd = &cobra.Command{Use: "memory", Short: "Memory search operations"}
+var memorySearchCmd = &cobra.Command{Use: "search QUERY", Args: cobra.ExactArgs(1), Short: "Search the configured memory backend; output source-linked JSON chunks", RunE: func(cmd *cobra.Command, args []string) error {
+	cfg := app.LoadConfig()
+	if len(cfg.MemorySearchCommand) == 0 {
+		return errors.New("memory.search_command is not configured")
+	}
+	s := memory.CommandSearcher{Args: cfg.MemorySearchCommand, Dir: cfg.WorkspaceDir, Timeout: 5 * time.Second}
+	chunks, err := s.Search(cmd.Context(), args[0])
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(cmd.OutOrStdout()).Encode(chunks)
+}}
+
+func init() { memoryCmd.AddCommand(memorySearchCmd); rootCmd.AddCommand(memoryCmd) }

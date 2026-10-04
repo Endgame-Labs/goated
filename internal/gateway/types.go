@@ -35,6 +35,7 @@ type IncomingMessage struct {
 	AttachmentsSucceeded []AttachmentResult
 	ReplyToText          string // text of the message being replied to (empty if not a reply)
 	ReplyToUserName      string // display name of the author of the replied-to message
+	RetrievedMemory      string // optional pre-dispatch memory, not user-authored text
 }
 
 type Responder interface {

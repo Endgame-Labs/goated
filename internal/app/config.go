@@ -50,6 +50,12 @@ func ValidateClaudeModel(model string) error {
 
 type Config struct {
 	WorkspaceDir                    string
+	MemorySearchCommand             []string
+	MemoryJevEnabled                bool
+	MemoryJevModel                  string
+	MemoryJevURL                    string
+	MemoryJevThreshold              float64
+	MemoryMaxChunks                 int
 	DBPath                          string
 	LogDir                          string
 	AgentRuntime                    string
@@ -117,6 +123,12 @@ func LoadConfig() Config {
 
 	// Defaults for all settings keys
 	v.SetDefault("gateway", "telegram")
+	v.SetDefault("memory.search_command", []string{})
+	v.SetDefault("memory.jev.enabled", false)
+	v.SetDefault("memory.jev.model", "jev-latest")
+	v.SetDefault("memory.jev.url", "https://api.typesafe.ai/v1/systemone")
+	v.SetDefault("memory.jev.threshold", 0.5)
+	v.SetDefault("memory.max_chunks", 12)
 	v.SetDefault("agent_runtime", "claude")
 	v.SetDefault("model", "")
 	v.SetDefault("default_timezone", "America/Los_Angeles")
@@ -143,6 +155,11 @@ func LoadConfig() Config {
 
 	// Bind env vars so they override config file values
 	v.BindEnv("gateway", "GOAT_GATEWAY")
+	v.BindEnv("memory.jev.enabled", "GOAT_MEMORY_JEV_ENABLED")
+	v.BindEnv("memory.jev.model", "GOAT_MEMORY_JEV_MODEL")
+	v.BindEnv("memory.jev.url", "GOAT_MEMORY_JEV_URL")
+	v.BindEnv("memory.jev.threshold", "GOAT_MEMORY_JEV_THRESHOLD")
+	v.BindEnv("memory.max_chunks", "GOAT_MEMORY_MAX_CHUNKS")
 	v.BindEnv("agent_runtime", "GOAT_AGENT_RUNTIME")
 	v.BindEnv("model", "GOAT_MODEL")
 	v.BindEnv("default_timezone", "GOAT_DEFAULT_TIMEZONE")
@@ -254,6 +271,12 @@ func LoadConfig() Config {
 
 	return Config{
 		WorkspaceDir:                    workspace,
+		MemorySearchCommand:             v.GetStringSlice("memory.search_command"),
+		MemoryJevEnabled:                v.GetBool("memory.jev.enabled"),
+		MemoryJevModel:                  v.GetString("memory.jev.model"),
+		MemoryJevURL:                    v.GetString("memory.jev.url"),
+		MemoryJevThreshold:              v.GetFloat64("memory.jev.threshold"),
+		MemoryMaxChunks:                 v.GetInt("memory.max_chunks"),
 		DBPath:                          dbPath,
 		LogDir:                          logDir,
 		AgentRuntime:                    v.GetString("agent_runtime"),

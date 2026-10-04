@@ -144,3 +144,13 @@ func TestBuildSystemNoticeEnvelope(t *testing.T) {
 		t.Fatal("missing metadata")
 	}
 }
+
+func TestBuildPromptEnvelopeIncludesRetrievedMemorySeparately(t *testing.T) {
+	got := BuildPromptEnvelope("slack", "C1", "current request", nil, "", "", &MessageContext{RetrievedMemory: "Source: vault/example.md\nA fact"})
+	if !strings.Contains(got, "retrieved_memory") || !strings.Contains(got, "vault/example.md") {
+		t.Fatalf("missing memory field: %s", got)
+	}
+	if !strings.Contains(got, "current request") {
+		t.Fatalf("lost user message: %s", got)
+	}
+}

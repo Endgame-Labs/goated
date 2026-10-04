@@ -116,3 +116,7 @@ Use Goated cron for all recurring work. Do **not** use any runtime-native schedu
 `session send` pastes text directly into the active runtime tmux pane and
 presses Enter. Useful for sending slash commands (`/context`, `/clear`) or
 ad-hoc prompts without going through the gateway.
+
+## Standard memory search
+
+When `memory.search_command` is configured in `goated.json`, use `./goat memory search "query"` to run the configured provider and receive JSON chunks with `source` and `text`. The gateway also runs this provider automatically before each normal user turn. The provider is an argv array (no shell interpolation); `{query}` is replaced with the current user message, or the query is appended if no placeholder appears. An example Alan-specific setting is `["self/tools/alan", "remember", "{query}"]`.

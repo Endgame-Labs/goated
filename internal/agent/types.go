@@ -120,6 +120,7 @@ type MessageContext struct {
 	ChatType        string // "private", "group", "supergroup", "channel", or ""
 	ReplyToText     string // text of the message being replied to (empty if not a reply)
 	ReplyToUserName string // display name of the author of the replied-to message
+	RetrievedMemory string // reference material from gateway memory search
 }
 
 type SessionRuntime interface {
