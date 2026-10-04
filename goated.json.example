@@ -9,11 +9,9 @@
   "memory": {
     "search_command": [],
     "max_chunks": 12,
-    "jev": {
-      "enabled": false,
-      "model": "jev-latest",
-      "threshold": 0.5
-    }
+    "hooks": [
+      {"enabled": false, "command": ["./goat", "memory", "hook", "jev"]}
+    ]
   },
   "slack": {
     "channel_id": "YOUR_SLACK_CHANNEL_ID"

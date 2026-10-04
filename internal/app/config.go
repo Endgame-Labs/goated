@@ -51,10 +51,7 @@ func ValidateClaudeModel(model string) error {
 type Config struct {
 	WorkspaceDir                    string
 	MemorySearchCommand             []string
-	MemoryJevEnabled                bool
-	MemoryJevModel                  string
-	MemoryJevURL                    string
-	MemoryJevThreshold              float64
+	MemoryHooks                     []MemoryHookConfig
 	MemoryMaxChunks                 int
 	DBPath                          string
 	LogDir                          string
@@ -87,6 +84,12 @@ type Config struct {
 	LogRetentionCompress            bool
 }
 
+// MemoryHookConfig configures one opt-in array-in/array-out hook.
+type MemoryHookConfig struct {
+	Enabled bool     `mapstructure:"enabled"`
+	Command []string `mapstructure:"command"`
+}
+
 // ParsedTelegramAllowedChatIDs parses TelegramAllowedChatIDs into int64 values.
 // Returns an error if any entry is not a valid int64.
 func (c Config) ParsedTelegramAllowedChatIDs() ([]int64, error) {
@@ -114,6 +117,7 @@ func LoadConfig() Config {
 
 	// Search paths: cwd, exe dir, exe parent dir (same as old .env search)
 	v.AddConfigPath(".")
+	v.AddConfigPath("..") // agent CLI is normally invoked from workspace/
 	exeDir := ""
 	if exe, err := os.Executable(); err == nil {
 		exeDir = filepath.Dir(exe)
@@ -124,10 +128,6 @@ func LoadConfig() Config {
 	// Defaults for all settings keys
 	v.SetDefault("gateway", "telegram")
 	v.SetDefault("memory.search_command", []string{})
-	v.SetDefault("memory.jev.enabled", false)
-	v.SetDefault("memory.jev.model", "jev-latest")
-	v.SetDefault("memory.jev.url", "https://api.typesafe.ai/v1/systemone")
-	v.SetDefault("memory.jev.threshold", 0.5)
 	v.SetDefault("memory.max_chunks", 12)
 	v.SetDefault("agent_runtime", "claude")
 	v.SetDefault("model", "")
@@ -155,10 +155,6 @@ func LoadConfig() Config {
 
 	// Bind env vars so they override config file values
 	v.BindEnv("gateway", "GOAT_GATEWAY")
-	v.BindEnv("memory.jev.enabled", "GOAT_MEMORY_JEV_ENABLED")
-	v.BindEnv("memory.jev.model", "GOAT_MEMORY_JEV_MODEL")
-	v.BindEnv("memory.jev.url", "GOAT_MEMORY_JEV_URL")
-	v.BindEnv("memory.jev.threshold", "GOAT_MEMORY_JEV_THRESHOLD")
 	v.BindEnv("memory.max_chunks", "GOAT_MEMORY_MAX_CHUNKS")
 	v.BindEnv("agent_runtime", "GOAT_AGENT_RUNTIME")
 	v.BindEnv("model", "GOAT_MODEL")
@@ -269,13 +265,20 @@ func LoadConfig() Config {
 		}
 	}
 
+	var memoryHooks []MemoryHookConfig
+	if raw := v.Get("memory.hooks"); raw != nil {
+		data, err := json.Marshal(raw)
+		if err == nil {
+			err = json.Unmarshal(data, &memoryHooks)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: memory.hooks config: %v\n", err)
+		}
+	}
 	return Config{
 		WorkspaceDir:                    workspace,
 		MemorySearchCommand:             v.GetStringSlice("memory.search_command"),
-		MemoryJevEnabled:                v.GetBool("memory.jev.enabled"),
-		MemoryJevModel:                  v.GetString("memory.jev.model"),
-		MemoryJevURL:                    v.GetString("memory.jev.url"),
-		MemoryJevThreshold:              v.GetFloat64("memory.jev.threshold"),
+		MemoryHooks:                     memoryHooks,
 		MemoryMaxChunks:                 v.GetInt("memory.max_chunks"),
 		DBPath:                          dbPath,
 		LogDir:                          logDir,

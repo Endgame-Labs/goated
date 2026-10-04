@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,22 +32,34 @@ func (f *fakeJudge) Useful(_ context.Context, _ string, _ History, c Chunk) (boo
 }
 func TestEngineParallelOrder(t *testing.T) {
 	j := &fakeJudge{}
-	e := Engine{Searcher: fakeSearch{{"one", "A"}, {"skip", "B"}, {"three", "C"}}, Judge: j, Parallel: 3}
+	e := Engine{Searcher: fakeSearch{{Source: "one", Text: "A"}, {Source: "skip", Text: "B"}, {Source: "three", Text: "C"}}, Hooks: []Hook{JevHook{Judge: j, Parallel: 3}}}
 	got, err := e.Retrieve(context.Background(), "query", History{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got, []Chunk{{"one", "A"}, {"three", "C"}}) {
+	if !reflect.DeepEqual(got, []Chunk{{Source: "one", Text: "A"}, {Source: "three", Text: "C"}}) {
 		t.Fatalf("got %#v", got)
 	}
 	if j.max.Load() < 2 {
 		t.Fatalf("not concurrent: %d", j.max.Load())
 	}
 }
-func TestParseSections(t *testing.T) {
-	got := parseSections("=== Remembering ===\n\n--- [file] vault/a.md ---\nalpha\n--- [tpuf-semantic] notes/b.md ---\nbeta\n")
-	if !reflect.DeepEqual(got, []Chunk{{"vault/a.md", "alpha\n"}, {"notes/b.md", "beta\n"}}) {
-		t.Fatalf("got %#v", got)
+func TestParseResultsRequiresJSONArray(t *testing.T) {
+	for _, bad := range []string{"null", "{}", "plain text", `[{"source":"x"}]`, `[{"text":"x"}]`} {
+		if _, err := ParseResults([]byte(bad)); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+	got, err := ParseResults([]byte(`[{"source":"vault/a.md","text":"alpha","kind":"file"}]`))
+	if err != nil || len(got) != 1 || got[0].Source != "vault/a.md" || got[0].Text != "alpha" || string(got[0].Extra["kind"]) != `"file"` {
+		t.Fatalf("got=%#v err=%v", got, err)
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil || !json.Valid(encoded) || !strings.Contains(string(encoded), `"kind":"file"`) {
+		t.Fatalf("metadata lost: %s, %v", encoded, err)
+	}
+	if got, err := ParseResults([]byte(`[]`)); err != nil || len(got) != 0 {
+		t.Fatalf("empty array got=%#v err=%v", got, err)
 	}
 }
 func TestJevStateAndDecision(t *testing.T) {
@@ -69,7 +82,7 @@ func TestJevStateAndDecision(t *testing.T) {
 	defer server.Close()
 	j := JevJudge{APIKey: "test", URL: server.URL, Threshold: 0.5}
 	h := History{Users: []string{"u1"}, Assistants: []string{"a1"}, Summary: "older summary"}
-	keep, err := j.Useful(context.Background(), "current", h, Chunk{"vault/x.md", "fact"})
+	keep, err := j.Useful(context.Background(), "current", h, Chunk{Source: "vault/x.md", Text: "fact"})
 	if err != nil || keep {
 		t.Fatalf("keep=%v err=%v", keep, err)
 	}

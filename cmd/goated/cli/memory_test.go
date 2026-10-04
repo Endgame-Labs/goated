@@ -18,3 +18,15 @@ func TestMemoryEngineUsesConfiguredCommand(t *testing.T) {
 		t.Fatalf("override searcher %T", engine.Searcher)
 	}
 }
+func TestMemoryEngineHooksDisabledByDefault(t *testing.T) {
+	engine := memoryEngine(app.Config{WorkspaceDir: t.TempDir(), MemoryHooks: []app.MemoryHookConfig{{Enabled: false, Command: []string{"cat"}}}})
+	if len(engine.Hooks) != 0 {
+		t.Fatalf("unexpected hooks: %d", len(engine.Hooks))
+	}
+}
+func TestMemoryEngineConfiguredHooks(t *testing.T) {
+	engine := memoryEngine(app.Config{WorkspaceDir: t.TempDir(), MemoryHooks: []app.MemoryHookConfig{{Enabled: true, Command: []string{"cat"}}}})
+	if len(engine.Hooks) != 1 {
+		t.Fatalf("hooks: %d", len(engine.Hooks))
+	}
+}

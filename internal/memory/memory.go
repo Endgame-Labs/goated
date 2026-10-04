@@ -17,9 +17,49 @@ import (
 )
 
 type Chunk struct {
-	Source string `json:"source"`
-	Text   string `json:"text"`
+	Source string                     `json:"source"`
+	Text   string                     `json:"text"`
+	Extra  map[string]json.RawMessage `json:"-"`
 }
+
+// Preserve provider- and hook-specific fields so a generic enrichment hook
+// can add metadata without Goated silently discarding it at the next stage.
+func (c *Chunk) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if fields == nil {
+		return errors.New("memory result must be an object")
+	}
+	if err := json.Unmarshal(fields["source"], &c.Source); err != nil {
+		return fmt.Errorf("memory result source: %w", err)
+	}
+	if err := json.Unmarshal(fields["text"], &c.Text); err != nil {
+		return fmt.Errorf("memory result text: %w", err)
+	}
+	delete(fields, "source")
+	delete(fields, "text")
+	if len(fields) == 0 {
+		c.Extra = nil
+	} else {
+		c.Extra = fields
+	}
+	return nil
+}
+
+func (c Chunk) MarshalJSON() ([]byte, error) {
+	fields := make(map[string]json.RawMessage, len(c.Extra)+2)
+	for key, value := range c.Extra {
+		if key != "source" && key != "text" {
+			fields[key] = value
+		}
+	}
+	fields["source"], _ = json.Marshal(c.Source)
+	fields["text"], _ = json.Marshal(c.Text)
+	return json.Marshal(fields)
+}
+
 type History struct {
 	Users      []string `json:"past_user_messages"`
 	Assistants []string `json:"past_assistant_responses"`
@@ -34,7 +74,7 @@ type Judge interface {
 
 // CommandSearcher runs an argv command (never a shell). Append the query as the
 // final argument, or put {query} in exactly one argument. JSON chunks are
-// preferred; sectioned text is also supported.
+// required; non-JSON and non-array output is rejected.
 type CommandSearcher struct {
 	Args     []string
 	Dir      string
@@ -76,11 +116,25 @@ func (s CommandSearcher) Search(ctx context.Context, query string) ([]Chunk, err
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("memory search: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	var chunks []Chunk
-	if json.Unmarshal(out.Bytes(), &chunks) == nil {
-		return chunks, nil
+	return ParseResults(out.Bytes())
+}
+
+// ParseResults enforces the common JSON-array result contract for providers
+// and hooks. Extra per-result fields are allowed for provider metadata.
+func ParseResults(data []byte) ([]Chunk, error) {
+	if !bytes.HasPrefix(bytes.TrimSpace(data), []byte("[")) {
+		return nil, errors.New("memory results must be a JSON array")
 	}
-	return parseSections(out.String()), nil
+	var chunks []Chunk
+	if err := json.Unmarshal(data, &chunks); err != nil {
+		return nil, fmt.Errorf("decode memory results: %w", err)
+	}
+	for i, c := range chunks {
+		if strings.TrimSpace(c.Source) == "" || strings.TrimSpace(c.Text) == "" {
+			return nil, fmt.Errorf("memory result %d requires nonempty source and text", i)
+		}
+	}
+	return chunks, nil
 }
 
 type limitedWriter struct {
@@ -99,31 +153,6 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 		w.n -= take
 	}
 	return n, nil
-}
-func parseSections(s string) []Chunk {
-	var chunks []Chunk
-	var cur *Chunk
-	for _, line := range strings.Split(s, "\n") {
-		if strings.HasPrefix(line, "--- [") && strings.HasSuffix(line, " ---") {
-			parts := strings.SplitN(line, "] ", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			if cur != nil && strings.TrimSpace(cur.Text) != "" {
-				chunks = append(chunks, *cur)
-			}
-			cur = &Chunk{Source: strings.TrimSuffix(parts[1], " ---")}
-			continue
-		}
-		if cur != nil {
-			cur.Text += line + "\n"
-		}
-	}
-	if cur != nil && strings.TrimSpace(cur.Text) != "" {
-		cur.Text = strings.TrimRight(cur.Text, "\n") + "\n"
-		chunks = append(chunks, *cur)
-	}
-	return chunks
 }
 
 // JevJudge evaluates each chunk independently. The caller runs it concurrently.
@@ -187,10 +216,19 @@ func (j JevJudge) Useful(ctx context.Context, query string, history History, chu
 
 type Engine struct {
 	Searcher  Searcher
-	Judge     Judge
+	Hooks     []Hook
 	MaxChunks int
-	Parallel  int
-	Timeout   time.Duration
+}
+
+type HookContext struct {
+	Query   string  `json:"current_user_message"`
+	History History `json:"history"`
+}
+
+// Hook transforms one validated JSON-array-shaped result set into another.
+// Filtering, enrichment, and pass-through telemetry all use this contract.
+type Hook interface {
+	Apply(context.Context, []Chunk, HookContext) ([]Chunk, error)
 }
 
 func (e Engine) Retrieve(ctx context.Context, query string, history History) ([]Chunk, error) {
@@ -208,6 +246,42 @@ func (e Engine) Retrieve(ctx context.Context, query string, history History) ([]
 	if len(chunks) > max {
 		chunks = chunks[:max]
 	}
+	for _, hook := range e.Hooks {
+		if hook == nil {
+			continue
+		}
+		next, hookErr := hook.Apply(ctx, chunks, HookContext{Query: query, History: history})
+		if hookErr != nil {
+			continue
+		} // fail open; caller still gets search results
+		if _, err := ParseResults(mustJSON(next)); err != nil {
+			continue
+		}
+		chunks = next
+	}
+	if chunks == nil {
+		return []Chunk{}, nil
+	}
+	return chunks, nil
+}
+
+func mustJSON(chunks []Chunk) []byte {
+	if chunks == nil {
+		chunks = []Chunk{}
+	}
+	b, _ := json.Marshal(chunks)
+	return b
+}
+
+// JevHook is an optional built-in filtering hook. It implements the same
+// array-in/array-out interface as command hooks, judging chunks in parallel.
+type JevHook struct {
+	Judge    Judge
+	Parallel int
+	Timeout  time.Duration
+}
+
+func (e JevHook) Apply(ctx context.Context, chunks []Chunk, state HookContext) ([]Chunk, error) {
 	if e.Judge == nil {
 		return chunks, nil
 	}
@@ -236,7 +310,7 @@ func (e Engine) Retrieve(ctx context.Context, query string, history History) ([]
 				selected[i] = true
 				return
 			}
-			useful, err := e.Judge.Useful(ctx, query, history, chunks[i])
+			useful, err := e.Judge.Useful(ctx, state.Query, state.History, chunks[i])
 			selected[i] = err != nil || useful
 		}()
 	}

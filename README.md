@@ -530,7 +530,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for build and PR expectations.
 
 ### Per-turn memory retrieval
 
-Goated includes a runtime-independent, best-effort memory hook. By default it searches Markdown/text files under the instance's `workspace/self/`, or the workspace directory if `self/` is absent. The default search skips credentials, logs, runtime state, dependency directories, and oversized files, then returns bounded source-linked snippets. The standard `./goat memory search "query"` command returns JSON chunks from this provider.
+Goated includes runtime-independent, best-effort memory retrieval. By default it searches Markdown/text files under the instance's `workspace/self/`, or the workspace directory if `self/` is absent. The default search skips credentials, logs, runtime state, instruction files, dependency directories, and oversized files. The standard `./goat memory search "query"` command returns a JSON array of source-linked chunks.
 
 Instances can replace the file search with an argv command in `goated.json`:
 
@@ -539,13 +539,18 @@ Instances can replace the file search with an argv command in `goated.json`:
   "memory": {
     "search_command": ["./bin/custom-memory-search", "{query}"],
     "max_chunks": 12,
-    "jev": {"enabled": true, "model": "jev-latest", "threshold": 0.5}
+    "hooks": [
+      {"enabled": false, "command": ["./goat", "memory", "hook", "jev"]},
+      {"enabled": false, "command": ["./bin/my-memory-hook"]}
+    ]
   }
 }
 ```
 
-Goated invokes the command without a shell, replacing `{query}` or appending the current user message. The command may return `[{"source":"path","text":"..."}]` JSON or sectioned text such as `--- [file] path ---`. An empty or absent `search_command` uses the default file search.
+The search command receives the query by replacing `{query}` or appending it, never through a shell. **Every provider must emit a valid JSON array** of objects with nonempty `source` and `text` strings: `[{"source":"path","text":"passage"}]`. Non-array, malformed, and missing-field output is rejected. An absent/empty `search_command` uses the built-in file search.
 
-Set `TYPESAFE_API_KEY` with `./goat creds set TYPESAFE_API_KEY ...` (or an environment variable), **not** in `goated.json`. With Jev enabled and a key available, each chunk is judged concurrently using TypeSafe's `POST /v1/systemone` `noul` answer. The state includes the current message, four prior user messages, four truncated prior assistant responses, an explicitly extractive older-conversation summary, and one source-linked chunk. Accepted chunks arrive in the agent envelope's separate `retrieved_memory` field. The memory is reference material, not a user or system instruction.
+Hooks are opt-in and run in configured order. Each hook receives the current result **JSON array on stdin** and must emit another valid result JSON array on stdout; Goated validates both. Hooks may filter, enrich, or pass through results for telemetry. Command hooks receive turn context in the `GOAT_MEMORY_HOOK_CONTEXT` environment variable (JSON containing current message and history). A failing or invalid hook leaves the prior array unchanged.
 
-Search and Jev failures never block the user's turn. If the key is absent, Goated returns unfiltered search results; if a Jev call fails, that chunk is retained rather than silently discarded. Command search is capped at 3 seconds/128 KiB and the parallel Jev stage at 5 seconds. The history comes from Goated's retained daily message logs, so fewer than four prior turns may be available after log retention or on a fresh install. This hook sends selected private conversation and memory text to TypeSafe when enabled; deploy only with appropriate authorization and data-handling policy. The hook is not a substitute for the agent's own verification of retrieved facts.
+The opt-in `./goat memory hook jev` command implements the same stdin/stdout JSON-array contract. It sends one source-linked chunk per concurrent TypeSafe `POST /v1/systemone` call. Each decision state includes the current message, four prior user messages, four truncated assistant responses, and an explicitly extractive older-conversation summary. The example leaves it **disabled by default**; enabling its command hook requires `TYPESAFE_API_KEY` in `./goat creds` or the environment, never in `goated.json`. Missing credentials leave search results unfiltered. Accepted results reach the runtime in a separate `retrieved_memory` envelope field, labeled reference material rather than instructions.
+
+Command search is capped at 3 seconds/128 KiB and each hook at 5 seconds. History comes from retained daily message logs, so fewer than four prior turns may be available on a fresh install or after retention. Enabling a networked hook sends private conversation and memory text to that provider; review the data boundary before deployment. Retrieved facts remain subject to verification.
