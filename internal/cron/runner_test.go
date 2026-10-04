@@ -97,7 +97,8 @@ func TestRunDispatchesOtherJobsAndMinutesWhileOneRuns(t *testing.T) {
 	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", command, "UTC", "", false, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", fmt.Sprintf("echo done > %q", fast), "UTC", "", false, false); err != nil {
+	fastID, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", fmt.Sprintf("echo done > %q", fast), "UTC", "", false, false)
+	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,6 +117,21 @@ func TestRunDispatchesOtherJobsAndMinutesWhileOneRuns(t *testing.T) {
 	}
 	waitForFile(t, started)
 	waitForFile(t, fast)
+	// The output file is written before run records and worker cleanup.
+	// Advance the simulated clock only once the fast worker has fully exited.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.mu.Lock()
+		running := r.running[fastID]
+		r.mu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("fast worker did not finish")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if err := r.Run(ctx, minute.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
