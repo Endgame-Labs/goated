@@ -41,7 +41,7 @@ func (h CommandHook) Apply(ctx context.Context, chunks []Chunk, state HookContex
 	var out, stderr bytes.Buffer
 	max := h.MaxBytes
 	if max <= 0 {
-		max = 128 << 10
+		max = 1 << 20
 	}
 	cmd.Stdout = &limitedWriter{w: &out, n: max}
 	cmd.Stderr = &limitedWriter{w: &stderr, n: 2048}

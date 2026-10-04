@@ -44,7 +44,7 @@ var memoryHookCmd = &cobra.Command{Use: "hook", Short: "Array-in/array-out memor
 var memoryJevCmd = &cobra.Command{Use: "jev", Args: cobra.NoArgs, Short: "Filter a JSON result array with Jev (opt-in hook command)", RunE: func(cmd *cobra.Command, _ []string) error {
 	cfg := app.LoadConfig()
 	key := memory.KeyFromFile(cfg.WorkspaceDir)
-	input, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), 128<<10))
+	input, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), 1<<20))
 	if err != nil {
 		return err
 	}

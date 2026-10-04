@@ -108,7 +108,7 @@ func (s CommandSearcher) Search(ctx context.Context, query string) ([]Chunk, err
 	var out bytes.Buffer
 	max := s.MaxBytes
 	if max <= 0 {
-		max = 128 << 10
+		max = 1 << 20
 	}
 	cmd.Stdout = &limitedWriter{w: &out, n: max}
 	var stderr bytes.Buffer
