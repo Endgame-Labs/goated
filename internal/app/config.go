@@ -50,6 +50,9 @@ func ValidateClaudeModel(model string) error {
 
 type Config struct {
 	WorkspaceDir                    string
+	MemorySearchCommand             []string
+	MemoryHooks                     []MemoryHookConfig
+	MemoryMaxChunks                 int
 	DBPath                          string
 	LogDir                          string
 	AgentRuntime                    string
@@ -81,6 +84,12 @@ type Config struct {
 	LogRetentionCompress            bool
 }
 
+// MemoryHookConfig configures one opt-in array-in/array-out hook.
+type MemoryHookConfig struct {
+	Enabled bool     `mapstructure:"enabled"`
+	Command []string `mapstructure:"command"`
+}
+
 // ParsedTelegramAllowedChatIDs parses TelegramAllowedChatIDs into int64 values.
 // Returns an error if any entry is not a valid int64.
 func (c Config) ParsedTelegramAllowedChatIDs() ([]int64, error) {
@@ -108,6 +117,7 @@ func LoadConfig() Config {
 
 	// Search paths: cwd, exe dir, exe parent dir (same as old .env search)
 	v.AddConfigPath(".")
+	v.AddConfigPath("..") // agent CLI is normally invoked from workspace/
 	exeDir := ""
 	if exe, err := os.Executable(); err == nil {
 		exeDir = filepath.Dir(exe)
@@ -117,6 +127,8 @@ func LoadConfig() Config {
 
 	// Defaults for all settings keys
 	v.SetDefault("gateway", "telegram")
+	v.SetDefault("memory.search_command", []string{})
+	v.SetDefault("memory.max_chunks", 12)
 	v.SetDefault("agent_runtime", "claude")
 	v.SetDefault("model", "")
 	v.SetDefault("default_timezone", "America/Los_Angeles")
@@ -143,6 +155,7 @@ func LoadConfig() Config {
 
 	// Bind env vars so they override config file values
 	v.BindEnv("gateway", "GOAT_GATEWAY")
+	v.BindEnv("memory.max_chunks", "GOAT_MEMORY_MAX_CHUNKS")
 	v.BindEnv("agent_runtime", "GOAT_AGENT_RUNTIME")
 	v.BindEnv("model", "GOAT_MODEL")
 	v.BindEnv("default_timezone", "GOAT_DEFAULT_TIMEZONE")
@@ -252,8 +265,21 @@ func LoadConfig() Config {
 		}
 	}
 
+	var memoryHooks []MemoryHookConfig
+	if raw := v.Get("memory.hooks"); raw != nil {
+		data, err := json.Marshal(raw)
+		if err == nil {
+			err = json.Unmarshal(data, &memoryHooks)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: memory.hooks config: %v\n", err)
+		}
+	}
 	return Config{
 		WorkspaceDir:                    workspace,
+		MemorySearchCommand:             v.GetStringSlice("memory.search_command"),
+		MemoryHooks:                     memoryHooks,
+		MemoryMaxChunks:                 v.GetInt("memory.max_chunks"),
 		DBPath:                          dbPath,
 		LogDir:                          logDir,
 		AgentRuntime:                    v.GetString("agent_runtime"),

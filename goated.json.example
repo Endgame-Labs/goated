@@ -6,6 +6,13 @@
   "gateway": "slack",
   "log_dir": "/path/to/goated/logs",
   "model": "opus",
+  "memory": {
+    "search_command": [],
+    "max_chunks": 12,
+    "hooks": [
+      {"enabled": false, "command": ["./goat", "memory", "hook", "jev"]}
+    ]
+  },
   "slack": {
     "channel_id": "YOUR_SLACK_CHANNEL_ID"
   },

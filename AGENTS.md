@@ -5,6 +5,11 @@ For agent runtime instructions (responding to users, memory, identity), see [wor
 
 ## Building
 
+All changes must be compatible with OS X/macOS and Ubuntu Linux. Account for
+platform differences in filesystems, process management, and shell utilities.
+Validate affected behavior on both platforms when possible, and state any
+platform that was not tested.
+
 If this machine is missing Go or other prerequisites, run:
 
 ```bash

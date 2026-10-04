@@ -75,6 +75,9 @@ func TestLoadConfigResolvesRelativePathsFromConfigFile(t *testing.T) {
 		"workspace_dir": "workspace",
 		"db_path":       "goated.db",
 		"log_dir":       "logs",
+		"memory": map[string]any{
+			"hooks": []map[string]any{{"enabled": true, "command": []string{"./goat", "memory", "hook", "jev"}}},
+		},
 		"slack": map[string]any{
 			"attachments_root": "workspace/tmp/slack/attachments",
 		},
@@ -101,6 +104,9 @@ func TestLoadConfigResolvesRelativePathsFromConfigFile(t *testing.T) {
 	assertSamePath(t, cfg.WorkspaceDir, workspace)
 	assertSamePath(t, cfg.DBPath, filepath.Join(root, "goated.db"))
 	assertSamePath(t, cfg.LogDir, filepath.Join(root, "logs"))
+	if len(cfg.MemoryHooks) != 1 || !cfg.MemoryHooks[0].Enabled || len(cfg.MemoryHooks[0].Command) != 4 {
+		t.Fatalf("memory hooks were not loaded: %#v", cfg.MemoryHooks)
+	}
 	assertSamePath(t, cfg.SlackAttachmentsRoot, filepath.Join(root, "workspace", "tmp", "slack", "attachments"))
 }
 

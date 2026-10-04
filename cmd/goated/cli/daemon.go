@@ -199,6 +199,7 @@ var daemonRunCmd = &cobra.Command{
 			Store:           store,
 			DefaultTimezone: cfg.DefaultTimezone,
 			AdminChatID:     cfg.AdminChatID,
+			Memory:          memoryEngine(cfg),
 			MsgLogger:       msgLogger,
 			SessionIDPath:   sessionIDPath,
 			DrainCtx:        drainCtx,

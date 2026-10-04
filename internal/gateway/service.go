@@ -12,6 +12,7 @@ import (
 
 	"goated/internal/agent"
 	"goated/internal/db"
+	"goated/internal/memory"
 	"goated/internal/msglog"
 )
 
@@ -29,7 +30,8 @@ type Service struct {
 	DefaultTimezone string
 	AdminChatID     string // chat ID for escalation alerts
 	MsgLogger       *msglog.Logger
-	SessionIDPath   string // path to runtime session/thread ID file for lifecycle tracking
+	Memory          *memory.Engine // optional pre-dispatch retrieval and filtering
+	SessionIDPath   string         // path to runtime session/thread ID file for lifecycle tracking
 
 	// DrainCtx is a context that stays alive during graceful shutdown so
 	// in-flight handlers can finish. Set this to a context that only cancels
@@ -115,6 +117,9 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 
 	// Log the user message with status=pending
 	s.logUserMessage(requestID, msg, msglog.StatusPending)
+	// Enrich before queueing as compactAndFlush dispatches queued messages
+	// directly. Keep this turn's request ID for history exclusion.
+	s.enrichMemory(ctx, &msg)
 
 	// If we're currently compacting, queue this message
 	s.mu.Lock()
@@ -184,6 +189,7 @@ func (s *Service) HandleBatchMessage(ctx context.Context, msgs []IncomingMessage
 			continue
 		}
 		s.logUserMessage(requestID, msgs[i], msglog.StatusPending)
+		s.enrichMemory(ctx, &msgs[i])
 
 		promptMsgs = append(promptMsgs, agent.PromptMessage{
 			Text:        msgs[i].Text,
@@ -281,6 +287,19 @@ func (s *Service) logUserMessage(requestID string, msg IncomingMessage, status m
 		HasAttachments:  len(msg.Attachments) > 0,
 		AttachmentCount: len(msg.Attachments),
 	}, status)
+}
+
+func (s *Service) enrichMemory(ctx context.Context, msg *IncomingMessage) {
+	if s.Memory == nil || strings.TrimSpace(msg.Text) == "" {
+		return
+	}
+	history := s.MsgLogger.RecentHistory(msg.ChatID, msglog.RequestIDFromContext(ctx))
+	chunks, err := s.Memory.Retrieve(ctx, msg.Text, history)
+	if err != nil {
+		s.logEvent(msglog.RequestIDFromContext(ctx), msglog.EventData{Name: "memory_search_failed", Detail: err.Error()})
+		return // memory failures never prevent delivery
+	}
+	msg.RetrievedMemory = memory.Format(chunks)
 }
 
 // logCommand logs a command invocation if the logger is configured.
@@ -636,7 +655,7 @@ func isAuthSummary(summary string) bool {
 // msgAttachments converts gateway attachment data into the agent-layer struct.
 // Returns nil if the message has no attachments.
 func msgContext(msg IncomingMessage) *agent.MessageContext {
-	if msg.UserID == "" && msg.UserName == "" && msg.UserUsername == "" && msg.ChatType == "" && msg.ReplyToText == "" && msg.ReplyToUserName == "" {
+	if msg.UserID == "" && msg.UserName == "" && msg.UserUsername == "" && msg.ChatType == "" && msg.ReplyToText == "" && msg.ReplyToUserName == "" && msg.RetrievedMemory == "" {
 		return nil
 	}
 	return &agent.MessageContext{
@@ -646,6 +665,7 @@ func msgContext(msg IncomingMessage) *agent.MessageContext {
 		ChatType:        msg.ChatType,
 		ReplyToText:     msg.ReplyToText,
 		ReplyToUserName: msg.ReplyToUserName,
+		RetrievedMemory: msg.RetrievedMemory,
 	}
 }
 

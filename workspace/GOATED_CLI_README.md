@@ -123,3 +123,7 @@ unset to use the selected runtime's default model. When set, the model is shown 
 `session send` pastes text directly into the active runtime tmux pane and
 presses Enter. Useful for sending slash commands (`/context`, `/clear`) or
 ad-hoc prompts without going through the gateway.
+
+## Standard memory search
+
+Use `./goat memory search "query"` to run the standard memory provider and receive JSON chunks with `source` and `text`. By default, Goated searches Markdown/text files under `workspace/self/` (falling back to `workspace/` if `self/` is absent). An instance can replace the provider with a `memory.search_command` argv array in `goated.json`; `{query}` is replaced with the current user message, or the query is appended if no placeholder appears. The gateway runs the same provider automatically before each normal user turn. Providers must emit a JSON array of results with nonempty `source` and `text`; invalid output is rejected. Optional array-in/array-out hooks are configured separately under `memory.hooks` and are disabled unless explicitly enabled.
