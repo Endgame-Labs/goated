@@ -42,10 +42,10 @@ func TestRunDispatchesOtherJobsAndMinutesWhileOneRuns(t *testing.T) {
 	started := filepath.Join(r.WorkspaceDir, "started")
 	fast := filepath.Join(r.WorkspaceDir, "fast")
 	command := fmt.Sprintf("echo started >> %q; while [ ! -f %q ]; do sleep 0.01; done", started, gate)
-	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", command, "UTC", false, false); err != nil {
+	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", command, "UTC", "", false, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", fmt.Sprintf("echo done > %q", fast), "UTC", false, false); err != nil {
+	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", fmt.Sprintf("echo done > %q", fast), "UTC", "", false, false); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -96,7 +96,7 @@ func TestRunBoundsConcurrentJobs(t *testing.T) {
 	gate := filepath.Join(r.WorkspaceDir, "gate")
 	command := fmt.Sprintf("while [ ! -f %q ]; do sleep 0.01; done", gate)
 	for i := 0; i < maxConcurrentPerType+1; i++ {
-		if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", command, "UTC", false, false); err != nil {
+		if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", command, "UTC", "", false, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -134,7 +134,7 @@ func TestWaitDrainsCanceledJob(t *testing.T) {
 	r, store := testRunner(t)
 	started := filepath.Join(r.WorkspaceDir, "started")
 	command := fmt.Sprintf("echo started > %q; exec sleep 30", started)
-	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", command, "UTC", false, false); err != nil {
+	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "", command, "UTC", "", false, false); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -166,7 +166,7 @@ func TestSystemJobRunsWhileAgentSlotsAreFull(t *testing.T) {
 	}
 	result := filepath.Join(r.WorkspaceDir, "system-ran")
 	if _, err := store.AddCronWithNotifications("system", "", "* * * * *", "", "",
-		fmt.Sprintf("echo yes > %q", result), "UTC", false, false); err != nil {
+		fmt.Sprintf("echo yes > %q", result), "UTC", "", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Run(context.Background(), time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)); err != nil {
