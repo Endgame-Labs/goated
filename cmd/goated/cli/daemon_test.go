@@ -6,11 +6,64 @@ import (
 	"net"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"goated/internal/agent"
 )
+
+func TestWaitDaemonWorkersBoundsEveryShutdownStage(t *testing.T) {
+	for _, blocked := range []string{"ticker", "cron", "messages"} {
+		t.Run(blocked, func(t *testing.T) {
+			tickerDone := make(chan struct{})
+			release := make(chan struct{})
+			defer close(release)
+			if blocked != "ticker" {
+				close(tickerDone)
+			}
+			var cronCalled atomic.Bool
+			waitCron := func() {
+				cronCalled.Store(true)
+				if blocked == "cron" {
+					<-release
+				}
+			}
+			waitMessages := func() {
+				if blocked == "messages" {
+					<-release
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			done := make(chan bool, 1)
+			go func() { done <- waitDaemonWorkers(ctx, tickerDone, waitCron, waitMessages) }()
+			select {
+			case drained := <-done:
+				if drained {
+					t.Fatal("reported complete while a shutdown stage is blocked")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("shutdown exceeded its deadline")
+			}
+			if blocked == "ticker" && cronCalled.Load() {
+				t.Fatal("waited for cron workers before dispatch stopped")
+			}
+		})
+	}
+}
+
+func TestWaitDaemonWorkersDrainsBothKindsOfWork(t *testing.T) {
+	tickerDone := make(chan struct{})
+	close(tickerDone)
+	var completed atomic.Int32
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	wait := func() { completed.Add(1) }
+	if !waitDaemonWorkers(ctx, tickerDone, wait, wait) || completed.Load() != 2 {
+		t.Fatal("did not wait for both cron and message workers")
+	}
+}
 
 type blockingDaemonResponder struct {
 	started chan struct{}
