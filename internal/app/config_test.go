@@ -111,7 +111,6 @@ func TestLoadConfigResolvesRelativePathsFromConfigFile(t *testing.T) {
 }
 
 func TestEnsureLocalBinPathsPrependsExistingDirs(t *testing.T) {
-	t.Parallel()
 
 	home := t.TempDir()
 	npmBin := filepath.Join(home, ".npm-global", "bin")
@@ -160,7 +159,6 @@ func TestEnsureLocalBinPathsPrependsExistingDirs(t *testing.T) {
 }
 
 func TestEnsureLocalBinPathsIsIdempotent(t *testing.T) {
-	t.Parallel()
 
 	home := t.TempDir()
 	npmBin := filepath.Join(home, ".npm-global", "bin")
