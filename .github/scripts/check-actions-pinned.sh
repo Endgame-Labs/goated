@@ -15,12 +15,12 @@ ref='(\./[^[:space:]"'"'"'#]+|docker://[^[:space:]"'"'"'#]+|[^[:space:]"'"'"'#@]
 pinned="${block_use}(\"${ref}\"|'${ref}'|${ref})([[:space:]]+(#.*)?)?$"
 
 failed=0
-for scope in .github .; do
-  if [[ $scope == .github ]]; then
+for scope in .github/workflows .; do
+  if [[ $scope == .github/workflows ]]; then
     args=(--include='*.yml' --include='*.yaml')
   else
     # Include composite actions anywhere, without scanning dependencies or Git.
-    args=(--exclude-dir=.git --exclude-dir=.github --exclude-dir=node_modules
+    args=(--exclude-dir=.git --exclude-dir=node_modules
       --exclude-dir=.venv --include=action.yml --include=action.yaml)
   fi
   if matches=$(grep -rnE "${args[@]}" "$use_pattern" "$scope"); then
