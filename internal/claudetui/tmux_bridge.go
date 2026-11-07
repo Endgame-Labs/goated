@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"goated/internal/authnotice"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,8 @@ type TmuxBridge struct {
 	probeMu      sync.Mutex
 	probeVerdict authProbeResult
 	probeExpiry  time.Time
+	// authObserver hears conclusive probe verdicts (SetAuthObserver).
+	authObserver func(ctx context.Context, failed bool)
 }
 
 func (b *TmuxBridge) now() time.Time {
@@ -460,12 +463,7 @@ func (b *TmuxBridge) healthFromSnapshot(ctx context.Context, snap string) agent.
 // auth failure at some point. The TUI transcript keeps rendering them long
 // after the underlying incident is over, so a match alone must not be
 // treated as the current state — see healthFromPaneTail.
-var authErrorPatterns = []string{
-	"API Error: 401",
-	"authentication_error",
-	"OAuth token has expired",
-	"Please run /login",
-}
+var authErrorPatterns = authnotice.Patterns
 
 // recoverableErrorPatterns are transient failures a session restart can clear.
 var recoverableErrorPatterns = []string{

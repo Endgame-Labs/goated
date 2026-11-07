@@ -260,6 +260,7 @@ var daemonRunCmd = &cobra.Command{
 				LogDir:       cfg.LogDir,
 				Notifier:     cronNoticeNotifier{responder: conn, session: runtime.Session(), channel: cfg.Gateway},
 				Headless:     runtime.Headless(),
+				Auth:         newAuthNotifier(cfg.AdminChatID, runtime.Session(), conn),
 			}
 			cronRunner = runner
 			go func() { defer close(cronDone); runCronTicker(ctx, runner) }()
@@ -300,6 +301,7 @@ var daemonRunCmd = &cobra.Command{
 				LogDir:       cfg.LogDir,
 				Notifier:     cronNoticeNotifier{responder: conn, session: runtime.Session(), channel: cfg.Gateway},
 				Headless:     runtime.Headless(),
+				Auth:         newAuthNotifier(cfg.AdminChatID, runtime.Session(), conn),
 			}
 			cronRunner = runner
 			go func() { defer close(cronDone); runCronTicker(ctx, runner) }()

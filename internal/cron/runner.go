@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"goated/internal/authnotice"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,9 @@ type Runner struct {
 	LogDir       string
 	Notifier     Notifier
 	Headless     agent.HeadlessRuntime
+	// Auth hears whether AI jobs could authenticate, so the admin chat gets
+	// one notice when the login expires and one when it works again. Optional.
+	Auth *authnotice.Notifier
 
 	mu            sync.Mutex
 	running       map[uint64]bool
@@ -32,6 +36,10 @@ type Runner struct {
 	subagentSlots chan struct{}
 	workers       sync.WaitGroup
 }
+
+// statusAuthExpired records a run refused because the Claude login expired,
+// so it isn't mistaken for a job that failed on its own.
+const statusAuthExpired = "auth_expired"
 
 // Bound each class separately so long AI work cannot starve cheap system jobs.
 const maxConcurrentPerType = 4
@@ -212,6 +220,14 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 		}
 	} else {
 		status, result = r.runSubagent(jobCtx, job, jobLog)
+		switch {
+		case status == "error" && authnotice.Match(string(result.Output)) != "":
+			// The job's own request was refused on auth, which confirms it.
+			status = statusAuthExpired
+			r.Auth.Expired(ctx)
+		case status == "ok":
+			r.Auth.Restored(ctx)
+		}
 	}
 
 	if result.RuntimeProvider != "" {
@@ -225,9 +241,16 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 		return runRecord{}, fmt.Errorf("update cron run: %w", err)
 	}
 
-	if status == "error" && r.Notifier != nil && notifyUser && chatID != "" {
-		errNotify := fmt.Sprintf("Cron job #%d failed. Check log: %s", job.ID, jobLog)
-		_ = r.Notifier.SendMessage(ctx, chatID, errNotify)
+	if r.Notifier != nil && notifyUser && chatID != "" {
+		switch status {
+		case "error":
+			errNotify := fmt.Sprintf("Cron job #%d failed. Check log: %s", job.ID, jobLog)
+			_ = r.Notifier.SendMessage(ctx, chatID, errNotify)
+		case statusAuthExpired:
+			_ = r.Notifier.SendMessage(ctx, chatID, fmt.Sprintf(
+				"Cron job #%d didn't run because Claude Code's login has expired. "+
+					"It runs again at its next scheduled time once someone logs in; this run won't be replayed.", job.ID))
+		}
 	}
 
 	return runRecord{
