@@ -42,7 +42,8 @@ type Service struct {
 	inflight sync.WaitGroup
 	draining atomic.Bool // set when shutdown begins; prevents new inflight work
 
-	msgCount     uint64 // atomic; counts non-command messages
+	msgCount     uint64      // atomic; counts non-command messages
+	stuckAlerted atomic.Bool // admin was told the session is stuck; reset once a send reaches the prompt
 	mu           sync.Mutex
 	compacting   bool
 	compactQueue []queuedMessage
@@ -244,12 +245,20 @@ func (s *Service) sendBatchWithRetry(ctx context.Context, channel, chatID string
 			}
 			return nil
 		}
+		if state.Kind == agent.SessionStateUnknownStable {
+			idle, err := s.recheckUnknownStable(ctx, requestID, chatID, responder)
+			if err != nil || !idle {
+				return err
+			}
+			state = agent.SessionState{Kind: agent.SessionStateAwaitingInput}
+		}
 		if !state.SafeIdle() {
 			if state.Kind == agent.SessionStateBlockedAuth || state.Kind == agent.SessionStateBlockedIntervene {
 				return responder.SendMessage(ctx, chatID, s.manualInterventionMessage(state))
 			}
 			return nil
 		}
+		s.stuckAlerted.Store(false)
 
 		apiErr := s.Session.DetectRetryableError(ctx)
 		if apiErr == "" {
@@ -377,13 +386,20 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 			// response later.
 			return nil
 		}
+		if state.Kind == agent.SessionStateUnknownStable {
+			idle, err := s.recheckUnknownStable(ctx, requestID, msg.ChatID, responder)
+			if err != nil || !idle {
+				return err
+			}
+			state = agent.SessionState{Kind: agent.SessionStateAwaitingInput}
+		}
 		if !state.SafeIdle() {
 			if state.Kind == agent.SessionStateBlockedAuth || state.Kind == agent.SessionStateBlockedIntervene {
 				return responder.SendMessage(ctx, msg.ChatID, s.manualInterventionMessage(state))
 			}
-			// Unknown/stable states are not errors — runtime may still be working.
 			return nil
 		}
+		s.stuckAlerted.Store(false)
 
 		apiErr := s.Session.DetectRetryableError(ctx)
 		if apiErr == "" {
@@ -408,6 +424,36 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 
 	return responder.SendMessage(ctx, msg.ChatID,
 		s.runtimeDisplayName()+" hit an API error and retries didn't help. Try again in a minute, or use /clear if it persists.")
+}
+
+// recheckUnknownStable handles a send whose wait ended with the pane stable but
+// no prompt found (#16). It re-reads the session once and returns true if it is
+// idle at the prompt now. It never presses keys: the pane may hold a permission
+// dialog or a suggested prompt, and a keystroke could answer or send it.
+// Otherwise it tells the sender the message may not have arrived, tells the
+// admin chat once (until a later send reaches the prompt), and returns false.
+func (s *Service) recheckUnknownStable(ctx context.Context, requestID, chatID string, responder Responder) (bool, error) {
+	state, err := s.Session.GetSessionState(ctx)
+	if err == nil && state.SafeIdle() {
+		s.logEvent(requestID, msglog.EventData{Name: "unknown_stable_recheck_idle"})
+		return true, nil
+	}
+	detail := "recheck failed"
+	if err == nil {
+		detail = fmt.Sprintf("state=%s (%s)", state.Kind, state.Summary)
+	}
+	s.logEvent(requestID, msglog.EventData{Name: "unknown_stable_stuck", Detail: detail})
+
+	name := s.runtimeDisplayName()
+	if s.AdminChatID != "" && s.AdminChatID != chatID && s.stuckAlerted.CompareAndSwap(false, true) {
+		_ = responder.SendMessage(ctx, s.AdminChatID, fmt.Sprintf(
+			"%s is stuck without an input prompt, so messages may not reach it. "+
+				"It may be showing a dialog, or someone pressed Escape in its tmux session. "+
+				"Attach to the session on the server to check it.", name))
+	}
+	return false, responder.SendMessage(ctx, chatID, fmt.Sprintf(
+		"%s is stuck without an input prompt, so your message may not have reached it. "+
+			"Someone needs to attach to its tmux session on the server to check it.", name))
 }
 
 func (s *Service) tryRecoverAfterIdleTimeout(ctx context.Context, requestID, chatID string, idleErr error) (bool, error) {
