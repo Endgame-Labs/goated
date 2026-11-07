@@ -668,3 +668,23 @@ func TestClassifySessionState(t *testing.T) {
 		}
 	})
 }
+
+func TestAuthObserverHearsConclusiveVerdicts(t *testing.T) {
+	verdicts := []authProbeResult{authProbeInconclusive, authProbeFailed, authProbeOK}
+	calls := 0
+	b := &TmuxBridge{authProbe: func(context.Context, string) authProbeResult {
+		res := verdicts[calls]
+		calls++
+		return res
+	}}
+	var heard []bool
+	b.SetAuthObserver(func(_ context.Context, failed bool) { heard = append(heard, failed) })
+
+	for range verdicts {
+		b.invalidateAuthProbe()
+		b.verifiedAuthState(context.Background())
+	}
+	if len(heard) != 2 || heard[0] != true || heard[1] != false {
+		t.Fatalf("observer heard %v, want [true false] (inconclusive is not reported)", heard)
+	}
+}

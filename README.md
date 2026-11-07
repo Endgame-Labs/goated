@@ -320,7 +320,7 @@ Secrets (`workspace/creds/*.txt`, env vars override):
 | Creds file / Env var             | Description                                       |
 | -------------------------------- | ------------------------------------------------- |
 | `GOAT_TELEGRAM_BOT_TOKEN`       | Telegram bot API token (required for Telegram)    |
-| `GOAT_ADMIN_CHAT_ID`            | Chat ID for admin alerts when auto-recovery fails |
+| `GOAT_ADMIN_CHAT_ID`            | Chat ID for admin alerts: auto-recovery failed, a stuck session, or an expired Claude login (one notice per expiry, and one when it works again) |
 | `GOAT_SLACK_BOT_TOKEN`          | Bot User OAuth Token (xoxb-...)                   |
 | `GOAT_SLACK_APP_TOKEN`          | App-Level Token (xapp-...) for Socket Mode        |
 

@@ -87,6 +87,7 @@ var startCmd = &cobra.Command{
 				LogDir:       cfg.LogDir,
 				Notifier:     conn,
 				Headless:     runtime.Headless(),
+				Auth:         newAuthNotifier(cfg.AdminChatID, runtime.Session(), conn),
 			}
 			go runCronTicker(ctx, runner)
 
@@ -123,6 +124,7 @@ var startCmd = &cobra.Command{
 				LogDir:       cfg.LogDir,
 				Notifier:     conn,
 				Headless:     runtime.Headless(),
+				Auth:         newAuthNotifier(cfg.AdminChatID, runtime.Session(), conn),
 			}
 			go runCronTicker(ctx, runner)
 

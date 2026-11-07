@@ -332,7 +332,7 @@ Settings live in `goated.json` (Viper-managed). Secrets live in `workspace/creds
 | `GOAT_TELEGRAM_WEBHOOK_URL.txt` | `GOAT_TELEGRAM_WEBHOOK_URL` | Public URL for webhook mode |
 | `GOAT_SLACK_BOT_TOKEN.txt` | `GOAT_SLACK_BOT_TOKEN` | Bot User OAuth Token (xoxb-...) |
 | `GOAT_SLACK_APP_TOKEN.txt` | `GOAT_SLACK_APP_TOKEN` | App-Level Token (xapp-...) |
-| `GOAT_ADMIN_CHAT_ID.txt` | `GOAT_ADMIN_CHAT_ID` | Chat ID for admin alerts |
+| `GOAT_ADMIN_CHAT_ID.txt` | `GOAT_ADMIN_CHAT_ID` | Chat ID for admin alerts, including expired-login notices (`internal/authnotice`) |
 
 Env vars always win over creds files. Use `goated creds set KEY VALUE` to manage.
 

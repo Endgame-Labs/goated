@@ -121,8 +121,21 @@ func (b *TmuxBridge) verifiedAuthState(ctx context.Context) authProbeResult {
 	case authProbeFailed:
 		b.probeVerdict, b.probeExpiry = res, b.now().Add(negativeProbeTTL)
 	}
+	observe := b.authObserver
 	b.probeMu.Unlock()
+	if observe != nil && res != authProbeInconclusive {
+		observe(ctx, res == authProbeFailed)
+	}
 	return res
+}
+
+// SetAuthObserver registers fn to hear every conclusive probe verdict:
+// failed=true when a real request confirmed the login expired, false when one
+// succeeded. Inconclusive probes are not reported.
+func (b *TmuxBridge) SetAuthObserver(fn func(ctx context.Context, failed bool)) {
+	b.probeMu.Lock()
+	b.authObserver = fn
+	b.probeMu.Unlock()
 }
 
 // probingVerdict is the cache check for the probing path: a positive verdict
