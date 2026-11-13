@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -257,7 +258,11 @@ func IsIdleFor(ctx context.Context, session string) bool {
 	return snap1 == snap2 && HasPrompt(snap2)
 }
 
-// HasPrompt checks if ❯ appears in the last 5 lines of the pane output.
+// HasPrompt reports whether Claude Code is showing its input prompt: ❯ in the
+// last 5 lines, or an input box that starts with ❯. The box check matters when
+// a tall footer (status line, background tasks, update notices) pushes the box
+// out of the last 5 lines; without it, an idle session after Escape looks
+// stuck (#16).
 func HasPrompt(paneOutput string) bool {
 	lines := strings.Split(strings.TrimRight(paneOutput, "\n "), "\n")
 	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
@@ -265,7 +270,32 @@ func HasPrompt(paneOutput string) bool {
 			return true
 		}
 	}
-	return false
+	box := inputBox(paneOutput)
+	if len(box) == 0 {
+		return false
+	}
+	first := strings.TrimSpace(box[0])
+	return strings.HasPrefix(first, "❯") && !menuOptionRe.MatchString(first)
+}
+
+// menuOptionRe matches a selected numbered option ("❯ 1. Yes"), which is a
+// dialog, not the input prompt.
+var menuOptionRe = regexp.MustCompile(`^❯\s*\d+\.`)
+
+// inputBox returns the lines of Claude Code's input box: the lines between the
+// last two horizontal rules. It returns nil when there aren't two rules.
+func inputBox(paneOutput string) []string {
+	lines := strings.Split(paneOutput, "\n")
+	var rules []int
+	for i, line := range lines {
+		if isHorizontalRule(line) {
+			rules = append(rules, i)
+		}
+	}
+	if len(rules) < 2 {
+		return nil
+	}
+	return lines[rules[len(rules)-2]+1 : rules[len(rules)-1]]
 }
 
 func hasCollapsedPastePlaceholder(paneOutput string) bool {
@@ -277,17 +307,7 @@ func hasCollapsedPastePlaceholder(paneOutput string) bool {
 // Matching against the text matters: an empty box can show a dimmed prompt
 // suggestion, and pressing Enter on that would send it.
 func hasUnsubmittedInput(paneOutput, text string) bool {
-	lines := strings.Split(paneOutput, "\n")
-	var rules []int
-	for i, line := range lines {
-		if isHorizontalRule(line) {
-			rules = append(rules, i)
-		}
-	}
-	if len(rules) < 2 {
-		return false
-	}
-	box := lines[rules[len(rules)-2]+1 : rules[len(rules)-1]]
+	box := inputBox(paneOutput)
 	if len(box) == 0 || !strings.HasPrefix(strings.TrimSpace(box[0]), "❯") {
 		return false
 	}

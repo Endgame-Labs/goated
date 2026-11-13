@@ -1,0 +1,12 @@
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 · Claude Max
+ ▝▝   ▝▝   ~/goated/workspace
+
+
+❯ Run the shell command: sleep 20
+
+● Bash(sleep 20)
+  ⎿  Interrupted · What should Claude do instead?
+
+⏺ Running the test suite now.
+  ⎿  ok  goated/internal/tmux  0.001s

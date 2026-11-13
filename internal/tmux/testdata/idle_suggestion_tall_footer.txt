@@ -1,0 +1,13 @@
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Opus 5.5 · Claude Max
+ ▝▝   ▝▝   ~/goated/workspace
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "refactor <filepath>"
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  🖥️  goated-host  📁 workspace  🌿 no-git
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+  ✔ Update installed · Restart to update
+  ● main
+  ◯ general-purpose  Waiting on full test suite run                 22m 4s · ↓ 222.0k tokens
